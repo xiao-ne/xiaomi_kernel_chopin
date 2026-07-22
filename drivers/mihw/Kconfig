@@ -1,0 +1,14 @@
+config MIHW
+        tristate "mi hardware driver"
+        default y
+        help
+          driver for mi hardware detection
+
+
+config MILLET
+	bool "frozen framework"
+	depends on MIHW
+	---help---
+	  Mi frozen function
+
+
