@@ -33,4 +33,4 @@ endif
 
 # spm
 ccflags-y += -I$(srctree)/drivers/misc/mediatek/base/power/include
-ccflags-y += -I$(srctree)/drivers/misc/mediatek/include/mt-plat/$(MTK_PLATFORM)/include
+ccflags-y += -I$(srctree)/drivers/misc/mediatek/include/mt-plat/$(MTK_PLATFORM)/includeobj-$(CONFIG_SND_SOC_MT6885_MT6359) += mt6885-stubs.o
