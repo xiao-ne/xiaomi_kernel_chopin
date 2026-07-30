@@ -339,13 +339,9 @@ static struct sk_buff *page_to_skb(struct virtnet_info *vi,
 	offset += hdr_padded_len;
 	p += hdr_padded_len;
 
-	/* Copy all frame if it fits skb->head, otherwise
-	 * we let virtio_net_hdr_to_skb() and GRO pull headers as needed.
-	 */
-	if (len <= skb_tailroom(skb))
-		copy = len;
-	else
-		copy = ETH_HLEN;
+	copy = len;
+	if (copy > skb_tailroom(skb))
+		copy = skb_tailroom(skb);
 	skb_put_data(skb, p, copy);
 
 	len -= copy;
@@ -452,13 +448,8 @@ static struct page *xdp_linearize_page(struct receive_queue *rq,
 				       int page_off,
 				       unsigned int *len)
 {
-	int tailroom = SKB_DATA_ALIGN(sizeof(struct skb_shared_info));
-	struct page *page;
+	struct page *page = alloc_page(GFP_ATOMIC);
 
-	if (page_off + *len + tailroom > PAGE_SIZE)
-		return NULL;
-
-	page = alloc_page(GFP_ATOMIC);
 	if (!page)
 		return NULL;
 
@@ -551,7 +542,6 @@ static struct sk_buff *receive_small(struct net_device *dev,
 
 		xdp.data_hard_start = buf + VIRTNET_RX_PAD + vi->hdr_len;
 		xdp.data = xdp.data_hard_start + xdp_headroom;
-		xdp_set_data_meta_invalid(&xdp);
 		xdp.data_end = xdp.data + len;
 		orig_data = xdp.data;
 		act = bpf_prog_run_xdp(xdp_prog, &xdp);
@@ -674,7 +664,6 @@ static struct sk_buff *receive_mergeable(struct net_device *dev,
 		data = page_address(xdp_page) + offset;
 		xdp.data_hard_start = data - VIRTIO_XDP_HEADROOM + vi->hdr_len;
 		xdp.data = data + vi->hdr_len;
-		xdp_set_data_meta_invalid(&xdp);
 		xdp.data_end = xdp.data + (len - vi->hdr_len);
 		act = bpf_prog_run_xdp(xdp_prog, &xdp);
 
@@ -1273,7 +1262,7 @@ static int xmit_skb(struct send_queue *sq, struct sk_buff *skb)
 	if (virtio_net_hdr_from_skb(skb, &hdr->hdr,
 				    virtio_is_little_endian(vi->vdev), false,
 				    0))
-		return -EPROTO;
+		BUG();
 
 	if (vi->mergeable_rx_bufs)
 		hdr->num_buffers = 0;
@@ -1799,16 +1788,14 @@ static int virtnet_set_channels(struct net_device *dev,
 
 	get_online_cpus();
 	err = _virtnet_set_queues(vi, queue_pairs);
-	if (err) {
-		put_online_cpus();
-		goto err;
+	if (!err) {
+		netif_set_real_num_tx_queues(dev, queue_pairs);
+		netif_set_real_num_rx_queues(dev, queue_pairs);
+
+		virtnet_set_affinity(vi);
 	}
-	virtnet_set_affinity(vi);
 	put_online_cpus();
 
-	netif_set_real_num_tx_queues(dev, queue_pairs);
-	netif_set_real_num_rx_queues(dev, queue_pairs);
- err:
 	return err;
 }
 
@@ -2097,7 +2084,7 @@ static u32 virtnet_xdp_query(struct net_device *dev)
 	return 0;
 }
 
-static int virtnet_xdp(struct net_device *dev, struct netdev_bpf *xdp)
+static int virtnet_xdp(struct net_device *dev, struct netdev_xdp *xdp)
 {
 	switch (xdp->command) {
 	case XDP_SETUP_PROG:
@@ -2124,7 +2111,7 @@ static const struct net_device_ops virtnet_netdev = {
 #ifdef CONFIG_NET_POLL_CONTROLLER
 	.ndo_poll_controller = virtnet_netpoll,
 #endif
-	.ndo_bpf		= virtnet_xdp,
+	.ndo_xdp		= virtnet_xdp,
 	.ndo_features_check	= passthru_features_check,
 };
 
@@ -2776,11 +2763,8 @@ static __maybe_unused int virtnet_restore(struct virtio_device *vdev)
 	virtnet_set_queues(vi, vi->curr_queue_pairs);
 
 	err = virtnet_cpu_notif_add(vi);
-	if (err) {
-		virtnet_freeze_down(vdev);
-		remove_vq_common(vi);
+	if (err)
 		return err;
-	}
 
 	return 0;
 }

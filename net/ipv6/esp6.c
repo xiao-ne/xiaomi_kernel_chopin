@@ -141,32 +141,14 @@ static void esp_ssg_unref(struct xfrm_state *x, void *tmp)
 static void esp_output_done(struct crypto_async_request *base, int err)
 {
 	struct sk_buff *skb = base->data;
-	struct xfrm_offload *xo = xfrm_offload(skb);
 	void *tmp;
-
-	struct xfrm_state *x;
-	if (xo && (xo->flags & XFRM_DEV_RESUME))
-		x = skb->sp->xvec[skb->sp->len - 1];
-	else
-		x = skb_dst(skb)->xfrm;
+	struct dst_entry *dst = skb_dst(skb);
+	struct xfrm_state *x = dst->xfrm;
 
 	tmp = ESP_SKB_CB(skb)->tmp;
 	esp_ssg_unref(x, tmp);
 	kfree(tmp);
-
-	if (xo && (xo->flags & XFRM_DEV_RESUME)) {
-		if (err) {
-			XFRM_INC_STATS(xs_net(x), LINUX_MIB_XFRMOUTSTATEPROTOERROR);
-			kfree_skb(skb);
-			return;
-		}
-
-		skb_push(skb, skb->data - skb_mac_header(skb));
-		secpath_reset(skb);
-		xfrm_dev_resume(skb);
-	} else {
-		xfrm_output_resume(skb, err);
-	}
+	xfrm_output_resume(skb, err);
 }
 
 /* Move ESP header back into place. */
@@ -237,14 +219,11 @@ static void esp_output_fill_trailer(u8 *tail, int tfclen, int plen, __u8 proto)
 int esp6_output_head(struct xfrm_state *x, struct sk_buff *skb, struct esp_info *esp)
 {
 	u8 *tail;
+	u8 *vaddr;
 	int nfrags;
 	struct page *page;
 	struct sk_buff *trailer;
 	int tailen = esp->tailen;
-
-	if (ALIGN(tailen, L1_CACHE_BYTES) > PAGE_SIZE ||
-	    ALIGN(skb->data_len, L1_CACHE_BYTES) > PAGE_SIZE)
-		goto cow;
 
 	if (!skb_cloned(skb)) {
 		if (tailen <= skb_tailroom(skb)) {
@@ -273,9 +252,13 @@ int esp6_output_head(struct xfrm_state *x, struct sk_buff *skb, struct esp_info 
 			page = pfrag->page;
 			get_page(page);
 
-			tail = page_address(page) + pfrag->offset;
+			vaddr = kmap_atomic(page);
+
+			tail = vaddr + pfrag->offset;
 
 			esp_output_fill_trailer(tail, esp->tfclen, esp->plen, esp->proto);
+
+			kunmap_atomic(vaddr);
 
 			nfrags = skb_shinfo(skb)->nr_frags;
 
@@ -517,9 +500,7 @@ static inline int esp_remove_trailer(struct sk_buff *skb)
 		skb->csum = csum_block_sub(skb->csum, csumdiff,
 					   skb->len - trimlen);
 	}
-	ret = pskb_trim(skb, skb->len - trimlen);
-	if (unlikely(ret))
-		return ret;
+	pskb_trim(skb, skb->len - trimlen);
 
 	ret = nexthdr[1];
 

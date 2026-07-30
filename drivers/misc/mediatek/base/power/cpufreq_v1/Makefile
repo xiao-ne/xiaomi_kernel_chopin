@@ -12,8 +12,4 @@
 #
 
 export CPUFREQ_ROOT_DIR ?= $(srctree)/drivers/misc/mediatek/base/power/cpufreq_v1
-
-# GCC 13: suppress enum-int-mismatch for legacy MTK code
-ccflags-y += -Wno-enum-int-mismatch
-
 obj-y += src/

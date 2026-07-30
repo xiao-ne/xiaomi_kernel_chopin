@@ -208,7 +208,6 @@ int diUnmount(struct inode *ipimap, int mounterror)
 	 * free in-memory control structure
 	 */
 	kfree(imap);
-	JFS_IP(ipimap)->i_imap = NULL;
 
 	return (0);
 }

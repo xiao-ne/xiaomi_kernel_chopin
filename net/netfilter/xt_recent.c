@@ -155,8 +155,7 @@ static void recent_entry_remove(struct recent_table *t, struct recent_entry *e)
 /*
  * Drop entries with timestamps older then 'time'.
  */
-static void recent_entry_reap(struct recent_table *t, unsigned long time,
-			      struct recent_entry *working, bool update)
+static void recent_entry_reap(struct recent_table *t, unsigned long time)
 {
 	struct recent_entry *e;
 
@@ -164,12 +163,6 @@ static void recent_entry_reap(struct recent_table *t, unsigned long time,
 	 * The head of the LRU list is always the oldest entry.
 	 */
 	e = list_entry(t->lru_list.next, struct recent_entry, lru_list);
-
-	/*
-	 * Do not reap the entry which are going to be updated.
-	 */
-	if (e == working && update)
-		return;
 
 	/*
 	 * The last time stamp is the most recent.
@@ -313,8 +306,7 @@ recent_mt(const struct sk_buff *skb, struct xt_action_param *par)
 
 		/* info->seconds must be non-zero */
 		if (info->check_set & XT_RECENT_REAP)
-			recent_entry_reap(t, time, e,
-				info->check_set & XT_RECENT_UPDATE && ret);
+			recent_entry_reap(t, time);
 	}
 
 	if (info->check_set & XT_RECENT_SET ||
@@ -350,8 +342,8 @@ static int recent_mt_check(const struct xt_mtchk_param *par,
 	net_get_random_once(&hash_rnd, sizeof(hash_rnd));
 
 	if (info->check_set & ~XT_RECENT_VALID_FLAGS) {
-		pr_info_ratelimited("Unsupported userspace flags (%08x)\n",
-				    info->check_set);
+		pr_info("Unsupported user space flags (%08x)\n",
+			info->check_set);
 		return -EINVAL;
 	}
 	if (hweight8(info->check_set &
@@ -365,8 +357,8 @@ static int recent_mt_check(const struct xt_mtchk_param *par,
 	if ((info->check_set & XT_RECENT_REAP) && !info->seconds)
 		return -EINVAL;
 	if (info->hit_count >= XT_RECENT_MAX_NSTAMPS) {
-		pr_info_ratelimited("hitcount (%u) is larger than allowed maximum (%u)\n",
-				    info->hit_count, XT_RECENT_MAX_NSTAMPS - 1);
+		pr_info("hitcount (%u) is larger than allowed maximum (%u)\n",
+			info->hit_count, XT_RECENT_MAX_NSTAMPS - 1);
 		return -EINVAL;
 	}
 	ret = xt_check_proc_name(info->name, sizeof(info->name));
@@ -595,7 +587,7 @@ recent_mt_proc_write(struct file *file, const char __user *input,
 		add = true;
 		break;
 	default:
-		pr_info_ratelimited("Need \"+ip\", \"-ip\" or \"/\"\n");
+		pr_info("Need \"+ip\", \"-ip\" or \"/\"\n");
 		return -EINVAL;
 	}
 
@@ -609,8 +601,10 @@ recent_mt_proc_write(struct file *file, const char __user *input,
 		succ   = in4_pton(c, size, (void *)&addr, '\n', NULL);
 	}
 
-	if (!succ)
+	if (!succ) {
+		pr_info("illegal address written to procfs\n");
 		return -EINVAL;
+	}
 
 	spin_lock_bh(&recent_lock);
 	e = recent_entry_lookup(t, &addr, family, 0);

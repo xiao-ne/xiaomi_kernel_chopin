@@ -66,19 +66,6 @@ static bool udp6_lib_exact_dif_match(struct net *net, struct sk_buff *skb)
 	return false;
 }
 
-static void udpv6_destruct_sock(struct sock *sk)
-{
-	udp_destruct_common(sk);
-	inet6_sock_destruct(sk);
-}
-
-int udpv6_init_sock(struct sock *sk)
-{
-	skb_queue_head_init(&udp_sk(sk)->reader_queue);
-	sk->sk_destruct = udpv6_destruct_sock;
-	return 0;
-}
-
 static u32 udp6_ehashfn(const struct net *net,
 			const struct in6_addr *laddr,
 			const u16 lport,
@@ -99,7 +86,7 @@ static u32 udp6_ehashfn(const struct net *net,
 	fhash = __ipv6_addr_jhash(faddr, udp_ipv6_hash_secret);
 
 	return __inet6_ehashfn(lhash, lport, fhash, fport,
-			       udp6_ehash_secret + net_hash_mix(net));
+			       udp_ipv6_hash_secret + net_hash_mix(net));
 }
 
 static u32 udp6_portaddr_hash(const struct net *net,
@@ -460,10 +447,6 @@ try_again:
 						    inet6_iif(skb));
 		}
 		*addr_len = sizeof(*sin6);
-
-		if (cgroup_bpf_enabled)
-			BPF_CGROUP_RUN_PROG_UDP6_RECVMSG_LOCK(sk,
-						(struct sockaddr *)sin6);
 	}
 
 	if (udp_sk(sk)->gro_enabled)
@@ -649,7 +632,7 @@ static int udpv6_queue_rcv_one_skb(struct sock *sk, struct sk_buff *skb)
 	/*
 	 * UDP-Lite specific tests, ignored on UDP sockets (see net/ipv4/udp.c).
 	 */
-	if ((up->pcflag & UDPLITE_RECV_CC)  &&  UDP_SKB_CB(skb)->partial_cov) {
+	if ((is_udplite & UDPLITE_RECV_CC)  &&  UDP_SKB_CB(skb)->partial_cov) {
 
 		if (up->pcrlen == 0) {          /* full coverage was set  */
 			net_dbg_ratelimited("UDPLITE6: partial coverage %d while full coverage %d requested\n",
@@ -890,7 +873,7 @@ int __udp6_lib_rcv(struct sk_buff *skb, struct udp_table *udptable,
 		struct dst_entry *dst = skb_dst(skb);
 		int ret;
 
-		if (unlikely(rcu_dereference(sk->sk_rx_dst) != dst))
+		if (unlikely(sk->sk_rx_dst != dst))
 			udp6_sk_rx_dst_set(sk, dst);
 
 		if (!uh->check && !udp_sk(sk)->no_check6_rx) {
@@ -974,7 +957,7 @@ static struct sock *__udp6_lib_demux_lookup(struct net *net,
 	return NULL;
 }
 
-void udp_v6_early_demux(struct sk_buff *skb)
+static void udp_v6_early_demux(struct sk_buff *skb)
 {
 	struct net *net = dev_net(skb->dev);
 	const struct udphdr *uh;
@@ -1002,7 +985,7 @@ void udp_v6_early_demux(struct sk_buff *skb)
 
 	skb->sk = sk;
 	skb->destructor = sock_efree;
-	dst = rcu_dereference(sk->sk_rx_dst);
+	dst = READ_ONCE(sk->sk_rx_dst);
 
 	if (dst)
 		dst = dst_check(dst, inet6_sk(sk)->rx_dst_cookie);
@@ -1034,25 +1017,6 @@ static void udp_v6_flush_pending_frames(struct sock *sk)
 		up->pending = 0;
 		ip6_flush_pending_frames(sk);
 	}
-}
-
-static int udpv6_pre_connect(struct sock *sk, struct sockaddr *uaddr,
-			     int addr_len)
-{
-	/* The following checks are replicated from __ip6_datagram_connect()
-	 * and intended to prevent BPF program called below from accessing
-	 * bytes that are out of the bound specified by user in addr_len.
-	 */
-	if (uaddr->sa_family == AF_INET) {
-		if (__ipv6_only_sock(sk))
-			return -EAFNOSUPPORT;
-		return udp_pre_connect(sk, uaddr, addr_len);
-	}
-
-	if (addr_len < SIN6_LEN_RFC2133)
-		return -EINVAL;
-
-	return BPF_CGROUP_RUN_PROG_INET6_CONNECT_LOCK(sk, uaddr);
 }
 
 /**
@@ -1212,7 +1176,7 @@ int udpv6_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 	struct ipcm6_cookie ipc6;
 	int addr_len = msg->msg_namelen;
 	int ulen = len;
-	int corkreq = READ_ONCE(up->corkflag) || msg->msg_flags&MSG_MORE;
+	int corkreq = up->corkflag || msg->msg_flags&MSG_MORE;
 	int err;
 	int connected = 0;
 	int is_udplite = IS_UDPLITE(sk);
@@ -1387,29 +1351,6 @@ do_udp_sendmsg:
 		fl6.saddr = np->saddr;
 	fl6.fl6_sport = inet->inet_sport;
 
-	if (cgroup_bpf_enabled && !connected) {
-		err = BPF_CGROUP_RUN_PROG_UDP6_SENDMSG_LOCK(sk,
-					   (struct sockaddr *)sin6, &fl6.saddr);
-		if (err)
-			goto out_no_dst;
-		if (sin6) {
-			if (ipv6_addr_v4mapped(&sin6->sin6_addr)) {
-				/* BPF program rewrote IPv6-only by IPv4-mapped
-				 * IPv6. It's currently unsupported.
-				 */
-				err = -ENOTSUPP;
-				goto out_no_dst;
-			}
-			if (sin6->sin6_port == 0) {
-				/* BPF program set invalid port. Reject it. */
-				err = -EINVAL;
-				goto out_no_dst;
-			}
-			fl6.fl6_dport = sin6->sin6_port;
-			fl6.daddr = sin6->sin6_addr;
-		}
-	}
-
 	final_p = fl6_update_dst(&fl6, opt, &final);
 	if (final_p)
 		connected = 0;
@@ -1506,7 +1447,6 @@ release_dst:
 
 out:
 	dst_release(dst);
-out_no_dst:
 	fl6_sock_release(flowlabel);
 	txopt_put(opt_to_free);
 	if (!err)
@@ -1537,9 +1477,6 @@ void udpv6_destroy_sock(struct sock *sk)
 {
 	struct udp_sock *up = udp_sk(sk);
 	lock_sock(sk);
-
-	/* protects from races with udp_abort() */
-	sock_set_flag(sk, SOCK_DEAD);
 	udp_v6_flush_pending_frames(sk);
 	release_sock(sk);
 
@@ -1549,6 +1486,8 @@ void udpv6_destroy_sock(struct sock *sk)
 		if (encap_destroy)
 			encap_destroy(sk);
 	}
+
+	inet6_destroy_sock(sk);
 }
 
 /*
@@ -1592,7 +1531,12 @@ int compat_udpv6_getsockopt(struct sock *sk, int level, int optname,
 }
 #endif
 
-static const struct inet6_protocol udpv6_protocol = {
+/* thinking of making this const? Don't.
+ * early_demux can change based on sysctl.
+ */
+static struct inet6_protocol udpv6_protocol = {
+	.early_demux	=	udp_v6_early_demux,
+	.early_demux_handler =  udp_v6_early_demux,
 	.handler	=	udpv6_rcv,
 	.err_handler	=	udpv6_err,
 	.flags		=	INET6_PROTO_NOPOLICY|INET6_PROTO_FINAL,
@@ -1650,11 +1594,10 @@ struct proto udpv6_prot = {
 	.name		   = "UDPv6",
 	.owner		   = THIS_MODULE,
 	.close		   = udp_lib_close,
-	.pre_connect	   = udpv6_pre_connect,
 	.connect	   = ip6_datagram_connect,
 	.disconnect	   = udp_disconnect,
 	.ioctl		   = udp_ioctl,
-	.init		   = udpv6_init_sock,
+	.init		   = udp_init_sock,
 	.destroy	   = udpv6_destroy_sock,
 	.setsockopt	   = udpv6_setsockopt,
 	.getsockopt	   = udpv6_getsockopt,

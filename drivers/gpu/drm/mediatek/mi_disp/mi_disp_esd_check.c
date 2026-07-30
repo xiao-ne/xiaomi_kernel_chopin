@@ -32,7 +32,6 @@
 #include "mtk_drm_ddp_comp.h"
 #include "mtk_drm_crtc.h"
 #include "mtk_drm_helper.h"
-#include "mi_disp_esd_check.h"
 #include "mtk_drm_assert.h"
 #include "mtk_drm_mmp.h"
 #include "mtk_drm_fbdev.h"

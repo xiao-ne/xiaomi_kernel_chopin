@@ -1152,7 +1152,7 @@ static int nicvf_register_misc_interrupt(struct nicvf *nic)
 	if (ret < 0) {
 		netdev_err(nic->netdev,
 			   "Req for #%d msix vectors failed\n", nic->num_vec);
-		return ret;
+		return 1;
 	}
 
 	sprintf(nic->irq_name[irq], "%s Mbox", "NICVF");
@@ -1171,7 +1171,7 @@ static int nicvf_register_misc_interrupt(struct nicvf *nic)
 	if (!nicvf_check_pf_ready(nic)) {
 		nicvf_disable_intr(nic, NICVF_INTR_MBOX, 0);
 		nicvf_unregister_interrupts(nic);
-		return -EIO;
+		return 1;
 	}
 
 	return 0;
@@ -1772,7 +1772,7 @@ static int nicvf_xdp_setup(struct nicvf *nic, struct bpf_prog *prog)
 	return ret;
 }
 
-static int nicvf_xdp(struct net_device *netdev, struct netdev_bpf *xdp)
+static int nicvf_xdp(struct net_device *netdev, struct netdev_xdp *xdp)
 {
 	struct nicvf *nic = netdev_priv(netdev);
 
@@ -1805,7 +1805,7 @@ static const struct net_device_ops nicvf_netdev_ops = {
 	.ndo_tx_timeout         = nicvf_tx_timeout,
 	.ndo_fix_features       = nicvf_fix_features,
 	.ndo_set_features       = nicvf_set_features,
-	.ndo_bpf		= nicvf_xdp,
+	.ndo_xdp		= nicvf_xdp,
 };
 
 static int nicvf_probe(struct pci_dev *pdev, const struct pci_device_id *ent)

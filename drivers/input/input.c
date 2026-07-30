@@ -50,17 +50,6 @@ static DEFINE_MUTEX(input_mutex);
 
 static const struct input_value input_value_sync = { EV_SYN, SYN_REPORT, 1 };
 
-static const unsigned int input_max_code[EV_CNT] = {
-	[EV_KEY] = KEY_MAX,
-	[EV_REL] = REL_MAX,
-	[EV_ABS] = ABS_MAX,
-	[EV_MSC] = MSC_MAX,
-	[EV_SW] = SW_MAX,
-	[EV_LED] = LED_MAX,
-	[EV_SND] = SND_MAX,
-	[EV_FF] = FF_MAX,
-};
-
 static inline int is_event_supported(unsigned int code,
 				     unsigned long *bm, unsigned int max)
 {
@@ -376,7 +365,6 @@ static int input_get_disposition(struct input_dev *dev,
 	*pval = value;
 	return disposition;
 }
-
 
 static void input_handle_event(struct input_dev *dev,
 			       unsigned int type, unsigned int code, int value)
@@ -1927,14 +1915,6 @@ EXPORT_SYMBOL(input_free_device);
  */
 void input_set_capability(struct input_dev *dev, unsigned int type, unsigned int code)
 {
-	if (type < EV_CNT && input_max_code[type] &&
-	    code > input_max_code[type]) {
-		pr_err("%s: invalid code %u for type %u\n", __func__, code,
-		       type);
-		dump_stack();
-		return;
-	}
-
 	switch (type) {
 	case EV_KEY:
 		__set_bit(code, dev->keybit);
@@ -2485,9 +2465,3 @@ static void __exit input_exit(void)
 
 subsys_initcall(input_init);
 module_exit(input_exit);
-
-/* Stub for KernelSU input event handler */
-#ifndef CONFIG_KSU
-int ksu_handle_input_handle_event(unsigned int *type, unsigned int *code, int *value) { return 0; }
-#endif
-

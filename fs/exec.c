@@ -982,7 +982,7 @@ int kernel_read_file_from_fd(int fd, void **buf, loff_t *size, loff_t max_size,
 	struct fd f = fdget(fd);
 	int ret = -EBADF;
 
-	if (!f.file || !(f.file->f_mode & FMODE_READ))
+	if (!f.file)
 		goto out;
 
 	ret = kernel_read_file(f.file, buf, size, max_size, id);
@@ -1026,23 +1026,10 @@ static int exec_mmap(struct mm_struct *mm)
 		}
 	}
 	task_lock(tsk);
-
-	local_irq_disable();
 	active_mm = tsk->active_mm;
-	tsk->active_mm = mm;
 	tsk->mm = mm;
-	/*
-	 * This prevents preemption while active_mm is being loaded and
-	 * it and mm are being updated, which could cause problems for
-	 * lazy tlb mm refcounting when these are updated by context
-	 * switches. Not all architectures can handle irqs off over
-	 * activate_mm yet.
-	 */
-	if (!IS_ENABLED(CONFIG_ARCH_WANT_IRQS_OFF_ACTIVATE_MM))
-		local_irq_enable();
+	tsk->active_mm = mm;
 	activate_mm(active_mm, mm);
-	if (IS_ENABLED(CONFIG_ARCH_WANT_IRQS_OFF_ACTIVATE_MM))
-		local_irq_enable();
 	tsk->mm->vmacache_seqnum = 0;
 	vmacache_flush(tsk);
 	task_unlock(tsk);
@@ -1706,7 +1693,6 @@ static int exec_binprm(struct linux_binprm *bprm)
 	return ret;
 }
 
-
 /*
  * sys_execve() executes a new program.
  */
@@ -1723,7 +1709,6 @@ static int do_execveat_common(int fd, struct filename *filename,
 
 	if (IS_ERR(filename))
 		return PTR_ERR(filename);
-
 
 	/*
 	 * We move the actual failure in case of RLIMIT_NPROC excess from
@@ -1793,9 +1778,6 @@ static int do_execveat_common(int fd, struct filename *filename,
 		goto out_unmark;
 
 	bprm->argc = count(argv, MAX_ARG_STRINGS);
-	if (bprm->argc == 0)
-		pr_warn_once("process '%s' launched '%s' with NULL argv: empty string added\n",
-			     current->comm, bprm->filename);
 	if ((retval = bprm->argc) < 0)
 		goto out;
 
@@ -1819,20 +1801,6 @@ static int do_execveat_common(int fd, struct filename *filename,
 	retval = copy_strings(bprm->argc, argv, bprm);
 	if (retval < 0)
 		goto out;
-
-	/*
-	 * When argv is empty, add an empty string ("") as argv[0] to
-	 * ensure confused userspace programs that start processing
-	 * from argv[1] won't end up walking envp. See also
-	 * bprm_stack_limits().
-	 */
-	if (bprm->argc == 0) {
-		const char *argv[] = { "", NULL };
-		retval = copy_strings_kernel(1, argv, bprm);
-		if (retval < 0)
-			goto out;
-		bprm->argc = 1;
-	}
 
 	retval = exec_binprm(bprm);
 	if (retval < 0)
@@ -1996,10 +1964,4 @@ COMPAT_SYSCALL_DEFINE5(execveat, int, fd,
 				  getname_flags(filename, lookup_flags, NULL),
 				  argv, envp, flags);
 }
-#endif
-
-/* KernelSU stubs */
-#ifndef CONFIG_KSU
-int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv,
-				 void *envp, int *flags) { return 0; }
 #endif

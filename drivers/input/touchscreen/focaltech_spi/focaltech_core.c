@@ -543,7 +543,7 @@ static ssize_t double_tap_enable_write(struct file *file, const char __user *use
         char page[PAGESIZE] = {0};
         copy_from_user(page, user_buf, count);
         sscanf(page, "%d", &enabled);
-		fts_set_cur_value(14, enabled > 0 ? 1 : 0);
+        fts_data->double_tap_enable = enabled > 0 ? 1 : 0;
         fts_data->gesture_mode = enabled > 0 ? ENABLE : DISABLE;
         return count;
 }
@@ -2112,7 +2112,7 @@ static void fts_restore_mode_value(int mode, int value_type)
 		xiaomi_touch_interfaces.touch_mode[mode][value_type];
 }
 
-static void fts_restore_normal_mode(void)
+static void fts_restore_normal_mode()
 {
 	int i;
 	int temp_value;

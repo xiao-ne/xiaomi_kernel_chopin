@@ -43,7 +43,7 @@
 #define NVT_DUMP_PARTITION_PATH		"/data/local/tmp"
 
 static ktime_t start, end;
-static const struct firmware *fw_entry = NULL;
+const struct firmware *fw_entry = NULL;
 static size_t fw_need_write_size = 0;
 static uint8_t *fwbuf = NULL;
 

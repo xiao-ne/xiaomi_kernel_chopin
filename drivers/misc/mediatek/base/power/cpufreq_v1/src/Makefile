@@ -13,9 +13,6 @@
 
 ccflags-y += -DMET_USER_EVENT_SUPPORT
 
-# GCC 13: suppress enum-int-mismatch for legacy MTK code
-ccflags-y += -Wno-enum-int-mismatch
-
 ifeq ($(CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE_NAMES),"mediatek/mt6885_3gear")
 MTK_PLATFORM := mt6893
 else
