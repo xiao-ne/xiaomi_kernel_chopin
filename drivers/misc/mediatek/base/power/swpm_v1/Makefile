@@ -11,6 +11,9 @@
 # GNU General Public License for more details.
 #
 
+# GCC 13: suppress enum-int-mismatch for legacy MTK code
+ccflags-y += -Wno-enum-int-mismatch
+
 ccflags-y += \
 	-I$(srctree)/drivers/misc/mediatek/include/mt-plat/	\
 	-I$(srctree)/drivers/misc/mediatek/base/power/include/	\

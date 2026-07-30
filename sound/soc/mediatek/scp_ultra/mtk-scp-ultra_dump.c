@@ -365,9 +365,7 @@ static int ultra_dump_kthread(void *data)
 				pcm_dump = (struct pcm_dump_t *)
 						(ultra_dump_mem.start_virt +
 						dump_package->rw_idx);
-				if (fp_pcm_in == NULL ||
-						(char __user *)
-						pcm_dump->decode_pcm == NULL) {
+				if (fp_pcm_in == NULL) {
 					pr_info("DUMP_PCM_IN null, break\n");
 					break;
 				}
@@ -397,9 +395,7 @@ static int ultra_dump_kthread(void *data)
 				pcm_dump = (struct pcm_dump_t *)
 						(ultra_dump_mem.start_virt +
 						dump_package->rw_idx);
-				if (fp_pcm_out == NULL ||
-					(char __user *)
-					pcm_dump->decode_pcm == NULL) {
+				if (fp_pcm_out == NULL) {
 					pr_info("DUMP_PCM_OUT null, break\n");
 					break;
 				}

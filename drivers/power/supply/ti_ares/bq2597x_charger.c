@@ -54,16 +54,16 @@ enum {
 	ADC_MAX_NUM,
 };
 
-static float sc8551_adc_lsb[] = {
-	[ADC_IBUS]	= SC8551_IBUS_ADC_LSB,
-	[ADC_VBUS]	= SC8551_VBUS_ADC_LSB,
-	[ADC_VAC]	= SC8551_VAC_ADC_LSB,
-	[ADC_VOUT]	= SC8551_VOUT_ADC_LSB,
-	[ADC_VBAT]	= SC8551_VBAT_ADC_LSB,
-	[ADC_IBAT]	= SC8551_IBAT_ADC_LSB,
-	[ADC_TBUS]	= SC8551_TSBUS_ADC_LSB,
-	[ADC_TBAT]	= SC8551_TSBAT_ADC_LSB,
-	[ADC_TDIE]	= SC8551_TDIE_ADC_LSB,
+static int sc8551_adc_lsb_x10000[] = {
+	[ADC_IBUS]	= 15625,
+	[ADC_VBUS]	= 37500,
+	[ADC_VAC]	= 50000,
+	[ADC_VOUT]	= 12500,
+	[ADC_VBAT]	= 12575,
+	[ADC_IBAT]	= 31250,
+	[ADC_TBUS]	= 10000,
+	[ADC_TBAT]	= 10000,
+	[ADC_TDIE]	= 10000,
 };
 
 #define BQ25970_ROLE_STDALONE   0
@@ -1087,7 +1087,7 @@ static int bq2597x_get_adc_data(struct bq2597x *bq, int channel,  int *result)
 
 	if (bq->chip_vendor == SC8551) {
 		kernel_neon_begin();
-		*result = (int)(t * sc8551_adc_lsb[channel]);
+		*result = (t * sc8551_adc_lsb_x10000[channel]) / 10000;
 		kernel_neon_end();
 	}
 

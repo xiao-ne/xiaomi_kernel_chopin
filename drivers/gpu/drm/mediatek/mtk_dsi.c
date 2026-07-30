@@ -5111,14 +5111,14 @@ int mi_mtk_mipi_dsi_read_gce(struct mtk_dsi *dsi,
 	DDPDBG("%s +\n", __func__);
 
 	/* Check cmd_msg param */
-	if (cmd_msg->type == 0 ||
+	if (cmd_msg->type[0] == 0 ||
 		cmd_msg->tx_cmd_num == 0 ||
 		cmd_msg->rx_cmd_num == 0 ||
 		cmd_msg->tx_cmd_num > MAX_TX_CMD_NUM ||
 		cmd_msg->rx_cmd_num > MAX_RX_CMD_NUM) {
 		DDPPR_ERR(
-			"%s: type is %s, tx_cmd_num is %d, rx_cmd_num is %d\n",
-			__func__, cmd_msg->type,
+			"%s: type is %x, tx_cmd_num is %d, rx_cmd_num is %d\n",
+			__func__, cmd_msg->type[0],
 			(int)cmd_msg->tx_cmd_num, (int)cmd_msg->rx_cmd_num);
 		return -EINVAL;
 	}
@@ -5835,13 +5835,13 @@ static void mtk_dsi_dy_fps_cmdq_cb(struct cmdq_cb_data data)
 	struct mtk_dsi *dsi;
 	int vrefresh = 0;
 
+	mtk_crtc = to_mtk_crtc(cb_data->crtc);
+
 	if (IS_ERR_OR_NULL(mtk_crtc) || IS_ERR_OR_NULL(&mtk_crtc->base)) {
 		cmdq_pkt_destroy(cb_data->cmdq_handle);
 		kfree(cb_data);
 		return;
 	}
-
-	mtk_crtc = to_mtk_crtc(cb_data->crtc);
 
 	DDP_MUTEX_LOCK(&mtk_crtc->lock, __func__, __LINE__);
 	vrefresh = mtk_crtc->base.state->adjusted_mode.vrefresh;

@@ -170,11 +170,13 @@ int mi_read_initcode(void)
 		if (ch_check(ch[1])) {
 			continue;
 		}
-		if (i < DATA_NUM)
-			kstrtou8(ch, 16, &init_data.data[i]);
-		else{
+		if (i >= DATA_NUM) {
 			pr_err("panel_send_cmds:cmd num over DATA_NUM = %d\n", i);
 			break;
+		}
+		if (kstrtou8(ch, 16, &init_data.data[i])) {
+			pr_err("panel_send_cmds: kstrtou8 failed for '%s'\n", ch);
+			continue;
 		}
 
 		i++;

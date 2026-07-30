@@ -42,6 +42,9 @@ ccflags-y += -DMET_SUPPORT
 ccflags-y += -DMET_USER_EVENT_SUPPORT
 endif
 
+# GCC 13: suppress enum-int-mismatch and memset-elt-size for legacy MTK code
+ccflags-y += -Wno-enum-int-mismatch -Wno-memset-elt-size
+
 ccflags-y += \
 	-I$(CPUFREQ_ROOT_DIR)/inc \
 	-I$(CPUFREQ_ROOT_DIR)/src/mach/$(CONFIG_MTK_PLATFORM) \

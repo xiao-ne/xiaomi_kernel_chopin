@@ -3938,7 +3938,9 @@ static ssize_t store_BAT_HEALTH(
 			else
 				strncpy(copy_str, s+1, chr_size-1);
 
-			kstrtoint(copy_str, 10, &value[count]);
+			if (kstrtoint(copy_str, 10, &value[count])) {
+				pr_err("%s: kstrtoint failed for '%s'\n", __func__, copy_str);
+			}
 			/* bm_err("::%s::count:%d,%d\n", copy_str, count, value[count]); */
 			s = pch;
 			pch = strchr(pch + 1, ',');

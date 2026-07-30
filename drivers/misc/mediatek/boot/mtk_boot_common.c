@@ -121,7 +121,7 @@ static void __init init_boot_common(unsigned int line)
 }
 
 /* return boot mode */
-unsigned int get_boot_mode(void)
+enum boot_mode_t get_boot_mode(void)
 {
 	if (atomic_read(&g_boot_init) != BM_INITIALIZED) {
 		pr_warn("fail, %s (%d) state(%d,%d)\n", __func__, __LINE__,
