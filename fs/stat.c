@@ -148,7 +148,6 @@ int vfs_statx_fd(unsigned int fd, struct kstat *stat,
 }
 EXPORT_SYMBOL(vfs_statx_fd);
 
-extern int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);
 
 /**
  * vfs_statx - Get basic and extra attributes by filename
@@ -172,7 +171,6 @@ int vfs_statx(int dfd, const char __user *filename, int flags,
 	int error = -EINVAL;
 	unsigned int lookup_flags = LOOKUP_FOLLOW | LOOKUP_AUTOMOUNT;
 
-	ksu_handle_stat(&dfd, &filename, &flags);
 
 	if ((flags & ~(AT_SYMLINK_NOFOLLOW | AT_NO_AUTOMOUNT |
 		       AT_EMPTY_PATH | KSTAT_QUERY_FLAGS)) != 0)
@@ -732,3 +730,8 @@ void inode_set_bytes(struct inode *inode, loff_t bytes)
 }
 
 EXPORT_SYMBOL(inode_set_bytes);
+
+/* KernelSU stubs */
+#ifndef CONFIG_KSU
+int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags) { return 0; }
+#endif

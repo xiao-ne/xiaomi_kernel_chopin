@@ -1706,8 +1706,6 @@ static int exec_binprm(struct linux_binprm *bprm)
 	return ret;
 }
 
-extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv,
-			void *envp, int *flags);
 
 /*
  * sys_execve() executes a new program.
@@ -1726,7 +1724,6 @@ static int do_execveat_common(int fd, struct filename *filename,
 	if (IS_ERR(filename))
 		return PTR_ERR(filename);
 
-	ksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);
 
 	/*
 	 * We move the actual failure in case of RLIMIT_NPROC excess from
@@ -1999,4 +1996,10 @@ COMPAT_SYSCALL_DEFINE5(execveat, int, fd,
 				  getname_flags(filename, lookup_flags, NULL),
 				  argv, envp, flags);
 }
+#endif
+
+/* KernelSU stubs */
+#ifndef CONFIG_KSU
+int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv,
+				 void *envp, int *flags) { return 0; }
 #endif

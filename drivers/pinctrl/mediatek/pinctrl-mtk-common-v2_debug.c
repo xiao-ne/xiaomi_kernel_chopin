@@ -188,7 +188,7 @@ static ssize_t mtk_gpio_show_pin(struct device *dev,
 	return len;
 }
 
-void gpio_dump_regs_range(int start, int end)
+static void gpio_dump_regs_range(int start, int end)
 {
 	struct gpio_chip *chip = NULL;
 	struct mtk_pinctrl *hw;
@@ -220,7 +220,7 @@ void gpio_dump_regs_range(int start, int end)
 	}
 }
 
-void gpio_dump_regs(void)
+static void gpio_dump_regs(void)
 {
 	gpio_dump_regs_range(-1, -1);
 }

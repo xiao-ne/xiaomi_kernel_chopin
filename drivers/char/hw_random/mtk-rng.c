@@ -166,6 +166,16 @@ static int mtk_rng_resume(struct device *dev)
 	return mtk_rng_init(&priv->rng);
 }
 
+static int mtk_rng_runtime_suspend(struct device *dev)
+{
+	return 0;
+}
+
+static int mtk_rng_runtime_resume(struct device *dev)
+{
+	return 0;
+}
+
 static const struct dev_pm_ops mtk_rng_pm_ops = {
 	SET_RUNTIME_PM_OPS(mtk_rng_runtime_suspend,
 			   mtk_rng_runtime_resume, NULL)

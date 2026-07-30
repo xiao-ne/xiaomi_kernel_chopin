@@ -30,3 +30,4 @@ mrdump-objs-$(CONFIG_ARM64) += mrdump_arm64.o
 mrdump-objs := $(mrdump-objs-n)
 
 KASAN_SANITIZE := n
+obj-$(CONFIG_MTK_AEE_FEATURE) += mrdump_stubs.o

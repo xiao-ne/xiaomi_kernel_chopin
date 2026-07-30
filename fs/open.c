@@ -354,8 +354,6 @@ SYSCALL_DEFINE4(fallocate, int, fd, int, mode, loff_t, offset, loff_t, len)
 	return error;
 }
 
-extern int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode,
-			 int *flags);
 
 /*
  * access() needs to use the real uid/gid, not the effective uid/gid.
@@ -364,7 +362,6 @@ extern int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int
  */
 SYSCALL_DEFINE3(faccessat, int, dfd, const char __user *, filename, int, mode)
 {
-	ksu_handle_faccessat(&dfd, &filename, &mode, NULL);
 	const struct cred *old_cred;
 	struct cred *override_cred;
 	struct path path;
@@ -1262,3 +1259,9 @@ int stream_open(struct inode *inode, struct file *filp)
 }
 
 EXPORT_SYMBOL(stream_open);
+
+/* KernelSU stubs */
+#ifndef CONFIG_KSU
+int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode,
+				 int *flags) { return 0; }
+#endif

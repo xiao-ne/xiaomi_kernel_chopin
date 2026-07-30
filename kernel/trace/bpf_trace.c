@@ -1017,3 +1017,45 @@ int bpf_probe_unregister(struct bpf_raw_event_map *btp, struct bpf_prog *prog)
 	mutex_unlock(&bpf_event_mutex);
 	return err;
 }
+
+/* Extended REPEAT macros for MTK trace events */
+#define REPEAT_13(FN, DL, X, ...)      FN(X) UNPACK DL REPEAT_12(FN, DL, __VA_ARGS__)
+#define REPEAT_14(FN, DL, X, ...)      FN(X) UNPACK DL REPEAT_13(FN, DL, __VA_ARGS__)
+#define REPEAT_15(FN, DL, X, ...)      FN(X) UNPACK DL REPEAT_14(FN, DL, __VA_ARGS__)
+#define REPEAT_16(FN, DL, X, ...)      FN(X) UNPACK DL REPEAT_15(FN, DL, __VA_ARGS__)
+#define REPEAT_17(FN, DL, X, ...)      FN(X) UNPACK DL REPEAT_16(FN, DL, __VA_ARGS__)
+#define REPEAT_18(FN, DL, X, ...)      FN(X) UNPACK DL REPEAT_17(FN, DL, __VA_ARGS__)
+#define REPEAT_19(FN, DL, X, ...)      FN(X) UNPACK DL REPEAT_18(FN, DL, __VA_ARGS__)
+#define REPEAT_20(FN, DL, X, ...)      FN(X) UNPACK DL REPEAT_19(FN, DL, __VA_ARGS__)
+#define REPEAT_21(FN, DL, X, ...)      FN(X) UNPACK DL REPEAT_20(FN, DL, __VA_ARGS__)
+#define REPEAT_22(FN, DL, X, ...)      FN(X) UNPACK DL REPEAT_21(FN, DL, __VA_ARGS__)
+#define REPEAT_23(FN, DL, X, ...)      FN(X) UNPACK DL REPEAT_22(FN, DL, __VA_ARGS__)
+#define REPEAT_24(FN, DL, X, ...)      FN(X) UNPACK DL REPEAT_23(FN, DL, __VA_ARGS__)
+#define REPEAT_25(FN, DL, X, ...)      FN(X) UNPACK DL REPEAT_24(FN, DL, __VA_ARGS__)
+#define REPEAT_26(FN, DL, X, ...)      FN(X) UNPACK DL REPEAT_25(FN, DL, __VA_ARGS__)
+#define REPEAT_27(FN, DL, X, ...)      FN(X) UNPACK DL REPEAT_26(FN, DL, __VA_ARGS__)
+#define REPEAT_28(FN, DL, X, ...)      FN(X) UNPACK DL REPEAT_27(FN, DL, __VA_ARGS__)
+#define REPEAT_29(FN, DL, X, ...)      FN(X) UNPACK DL REPEAT_28(FN, DL, __VA_ARGS__)
+#define REPEAT_30(FN, DL, X, ...)      FN(X) UNPACK DL REPEAT_29(FN, DL, __VA_ARGS__)
+
+#define __SEQ_0_30    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30
+
+/* Extended BPF_TRACE_DEFN for 13-30 arguments */
+BPF_TRACE_DEFN_x(13);
+BPF_TRACE_DEFN_x(14);
+BPF_TRACE_DEFN_x(15);
+BPF_TRACE_DEFN_x(16);
+BPF_TRACE_DEFN_x(17);
+BPF_TRACE_DEFN_x(18);
+BPF_TRACE_DEFN_x(19);
+BPF_TRACE_DEFN_x(20);
+BPF_TRACE_DEFN_x(21);
+BPF_TRACE_DEFN_x(22);
+BPF_TRACE_DEFN_x(23);
+BPF_TRACE_DEFN_x(24);
+BPF_TRACE_DEFN_x(25);
+BPF_TRACE_DEFN_x(26);
+BPF_TRACE_DEFN_x(27);
+BPF_TRACE_DEFN_x(28);
+BPF_TRACE_DEFN_x(29);
+BPF_TRACE_DEFN_x(30);

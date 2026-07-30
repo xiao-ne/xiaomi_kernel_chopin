@@ -776,3 +776,4 @@ int mini_rdump_reserve_memory(struct reserved_mem *rmem)
 RESERVEDMEM_OF_DECLARE(reserve_memory_minirdump, "mediatek,minirdump",
 		       mini_rdump_reserve_memory);
 
+

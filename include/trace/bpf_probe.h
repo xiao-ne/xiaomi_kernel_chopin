@@ -110,4 +110,26 @@ __DEFINE_EVENT(template, call, PARAMS(proto), PARAMS(args), size)
 #undef DEFINE_EVENT_WRITABLE
 #undef __DEFINE_EVENT
 #undef FIRST
+
+/* Extended CAST macros for MTK trace events with many arguments */
+#define __CAST13(a,...) __CAST_TO_U64(a), __CAST12(__VA_ARGS__)
+#define __CAST14(a,...) __CAST_TO_U64(a), __CAST13(__VA_ARGS__)
+#define __CAST15(a,...) __CAST_TO_U64(a), __CAST14(__VA_ARGS__)
+#define __CAST16(a,...) __CAST_TO_U64(a), __CAST15(__VA_ARGS__)
+#define __CAST17(a,...) __CAST_TO_U64(a), __CAST16(__VA_ARGS__)
+#define __CAST18(a,...) __CAST_TO_U64(a), __CAST17(__VA_ARGS__)
+#define __CAST19(a,...) __CAST_TO_U64(a), __CAST18(__VA_ARGS__)
+#define __CAST20(a,...) __CAST_TO_U64(a), __CAST19(__VA_ARGS__)
+#define __CAST21(a,...) __CAST_TO_U64(a), __CAST20(__VA_ARGS__)
+#define __CAST22(a,...) __CAST_TO_U64(a), __CAST21(__VA_ARGS__)
+#define __CAST23(a,...) __CAST_TO_U64(a), __CAST22(__VA_ARGS__)
+#define __CAST24(a,...) __CAST_TO_U64(a), __CAST23(__VA_ARGS__)
+#define __CAST25(a,...) __CAST_TO_U64(a), __CAST24(__VA_ARGS__)
+#define __CAST26(a,...) __CAST_TO_U64(a), __CAST25(__VA_ARGS__)
+#define __CAST27(a,...) __CAST_TO_U64(a), __CAST26(__VA_ARGS__)
+#define __CAST28(a,...) __CAST_TO_U64(a), __CAST27(__VA_ARGS__)
+#define __CAST29(a,...) __CAST_TO_U64(a), __CAST28(__VA_ARGS__)
+#define __CAST30(a,...) __CAST_TO_U64(a), __CAST29(__VA_ARGS__)
+
 #endif /* CONFIG_BPF_EVENTS */
+
