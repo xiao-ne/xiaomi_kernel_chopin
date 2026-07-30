@@ -104,7 +104,7 @@ extern int cm_mgr_to_sspm_command(u32 cmd, int val);
 
 enum mt_cpu_dvfs_id;
 
-extern unsigned int mt_cpufreq_get_cur_phy_freq_no_lock(enum mt_cpu_dvfs_id id);
+extern unsigned int mt_cpufreq_get_cur_phy_freq_no_lock(unsigned int id);
 
 extern void sched_get_percpu_load2(int cpu, bool reset,
 		unsigned int *rel_load, unsigned int *abs_load);

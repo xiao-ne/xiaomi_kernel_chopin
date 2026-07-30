@@ -873,8 +873,10 @@ lto-clang-flags += -fvisibility=default $(call cc-option, -fsplit-lto-unit)
 # Limit inlining across translation units to reduce binary size
 LD_FLAGS_LTO_CLANG := -mllvm -import-instr-limit=5
 
+ifeq ($(COMPILER),clang)
 KBUILD_LDFLAGS += $(LD_FLAGS_LTO_CLANG)
 KBUILD_LDFLAGS_MODULE += $(LD_FLAGS_LTO_CLANG)
+endif
 
 KBUILD_LDFLAGS_MODULE += -T scripts/module-lto.lds
 
@@ -1026,6 +1028,19 @@ KBUILD_CFLAGS   += $(call cc-option,-Werror=incompatible-pointer-types)
 
 # Require designated initializers for all marked structures
 KBUILD_CFLAGS   += $(call cc-option,-Werror=designated-init)
+
+# GCC 13: suppress enum-int-mismatch for legacy MTK code
+KBUILD_CFLAGS   += $(call cc-option,-Wno-enum-int-mismatch)
+
+# GCC 13: suppress sizeof-pointer-memaccess and frame-larger-than for legacy MTK code
+KBUILD_CFLAGS   += $(call cc-option,-Wno-sizeof-pointer-memaccess)
+KBUILD_CFLAGS   += $(call cc-option,-Wno-frame-larger-than)
+
+# GCC 13: suppress address-of-function warnings for weak symbols
+KBUILD_CFLAGS   += $(call cc-option,-Wno-address)
+
+# GCC 13: suppress switch-unreachable for legacy MTK code
+KBUILD_CFLAGS   += $(call cc-option,-Wno-switch-unreachable)
 
 # change __FILE__ to the relative path from the srctree
 KBUILD_CFLAGS	+= $(call cc-option,-fmacro-prefix-map=$(srctree)/=)
