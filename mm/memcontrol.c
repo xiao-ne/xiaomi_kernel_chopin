@@ -6379,3 +6379,11 @@ static int __init mem_cgroup_swap_init(void)
 subsys_initcall(mem_cgroup_swap_init);
 
 #endif /* CONFIG_MEMCG_SWAP */
+
+/* mem_cgroup_event - backport stub from newer kernels */
+void mem_cgroup_event(struct mem_cgroup *memcg,
+		      enum mem_cgroup_events_target target)
+{
+	/* stub - not critical for basic operation */
+}
+EXPORT_SYMBOL_GPL(mem_cgroup_event);

@@ -5654,3 +5654,11 @@ out:
 	release_sock(sk);
 	return ret;
 }
+
+/* Stubs for functions added in newer kernels */
+void bpf_compute_data_end(struct sk_buff *skb)
+{
+	/* no-op in 4.14 - BPF data_end handled differently */
+}
+EXPORT_SYMBOL_GPL(bpf_compute_data_end);
+

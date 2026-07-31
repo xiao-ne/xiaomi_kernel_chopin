@@ -597,6 +597,9 @@ EXPORT_SYMBOL_GPL(inet_unhash);
  * to really give more isolation and privacy, at the expense of 256kB
  * of kernel memory.
  */
+#ifndef CONFIG_INET_TABLE_PERTURB_ORDER
+#define CONFIG_INET_TABLE_PERTURB_ORDER 8
+#endif
 #define INET_TABLE_PERTURB_SIZE (1 << CONFIG_INET_TABLE_PERTURB_ORDER)
 static u32 *table_perturb;
 

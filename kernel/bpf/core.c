@@ -1572,11 +1572,11 @@ static u64 PROG_NAME_ARGS(stack_size)(u64 r1, u64 r2, u64 r3, u64 r4, u64 r5, \
 }
 
 #define EVAL1(FN, X) FN(X)
-#define EVAL2(FN, X, Y...) FN(X) EVAL1(FN, Y)
-#define EVAL3(FN, X, Y...) FN(X) EVAL2(FN, Y)
-#define EVAL4(FN, X, Y...) FN(X) EVAL3(FN, Y)
-#define EVAL5(FN, X, Y...) FN(X) EVAL4(FN, Y)
-#define EVAL6(FN, X, Y...) FN(X) EVAL5(FN, Y)
+#define EVAL2(FN, X, Y) FN(X) EVAL1(FN, Y)
+#define EVAL3(FN, X, Y, Z) FN(X) EVAL2(FN, Y, Z)
+#define EVAL4(FN, X, Y, Z, W) FN(X) EVAL3(FN, Y, Z, W)
+#define EVAL5(FN, X, Y, Z, W, V) FN(X) EVAL4(FN, Y, Z, W, V)
+#define EVAL6(FN, X, Y, Z, W, V, U) FN(X) EVAL5(FN, Y, Z, W, V, U)
 
 EVAL6(DEFINE_BPF_PROG_RUN, 32, 64, 96, 128, 160, 192);
 EVAL6(DEFINE_BPF_PROG_RUN, 224, 256, 288, 320, 352, 384);
@@ -1593,6 +1593,7 @@ static unsigned int (*interpreters[])(const void *ctx,
 EVAL6(PROG_NAME_LIST, 32, 64, 96, 128, 160, 192)
 EVAL6(PROG_NAME_LIST, 224, 256, 288, 320, 352, 384)
 EVAL4(PROG_NAME_LIST, 416, 448, 480, 512)
+};
 
 #undef PROG_NAME_LIST
 #define PROG_NAME_LIST(stack_size) PROG_NAME_ARGS(stack_size),
@@ -1611,8 +1612,6 @@ void bpf_patch_call_args(struct bpf_insn *insn, u32 stack_depth)
 		__bpf_call_base_args;
 	insn->code = BPF_JMP | BPF_CALL_ARGS;
 }
-
-};
 
 #else
 static unsigned int __bpf_prog_ret0_warn(const void *ctx,

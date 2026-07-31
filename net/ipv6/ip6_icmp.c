@@ -7,7 +7,7 @@
 
 #include <net/ipv6.h>
 
-#if IS_ENABLED(CONFIG_IPV6)
+#if !IS_BUILTIN(CONFIG_IPV6)
 
 static ip6_icmp_send_t __rcu *ip6_icmp_send;
 

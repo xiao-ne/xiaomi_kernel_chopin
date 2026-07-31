@@ -73,6 +73,9 @@
 
 #include "internal.h"
 
+/* forward declaration */
+unsigned long vma_address_end(struct page *page, struct vm_area_struct *vma);
+
 static struct kmem_cache *anon_vma_cachep;
 static struct kmem_cache *anon_vma_chain_cachep;
 
@@ -2017,3 +2020,15 @@ void hugepage_add_new_anon_rmap(struct page *page,
 	__hugepage_set_anon_rmap(page, vma, address, 1);
 }
 #endif /* CONFIG_HUGETLB_PAGE */
+
+/* vma_address_end - backport from newer kernels */
+unsigned long vma_address_end(struct page *page, struct vm_area_struct *vma)
+{
+	unsigned long end = vma->vm_end;
+
+	if (PageHuge(page))
+		end = vma->vm_start + (1UL << huge_page_shift(hstate_vma(vma)));
+
+	return end;
+}
+EXPORT_SYMBOL_GPL(vma_address_end);

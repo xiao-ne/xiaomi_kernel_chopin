@@ -275,9 +275,7 @@ obj-$(CONFIG_THERMAL) += mtk_cooler_sysrst.o
 #obj-$(CONFIG_THERMAL) += mtk_cooler_VR_FPS.o
 endif
 
-$(warning 3 liaoye $(CONFIG_MTK_PLATFORM))
 ifneq (,$(filter $(CONFIG_MTK_PLATFORM), "mt6853"))
-$(warning 4 liaoye $(CONFIG_MTK_PLATFORM))
 #obj-$(CONFIG_THERMAL) += mtk_cooler_fps.o
 ifeq ($(CONFIG_MTK_PUMP_EXPRESS_PLUS_30_SUPPORT),y)
 	#obj-$(CONFIG_THERMAL) += mtk_cooler_bcct_v1.o

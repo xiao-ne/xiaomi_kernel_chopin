@@ -13,4 +13,7 @@ endif
 ifeq ($(CONFIG_PERF_EVENTS),y)
 obj-$(CONFIG_BPF_SYSCALL) += stackmap.o
 endif
-obj-$(CONFIG_CGROUP_BPF) += cgroup.o
+obj-$(CONFIG_CGROUP_BPF) += cgroup.o cgroup_stubs.o
+obj-$(CONFIG_BPF_SYSCALL) += btf.o offload.o
+obj-$(CONFIG_BPF_SYSCALL) += cpumap.o local_storage.o
+obj-$(CONFIG_BPF_SYSCALL) += disasm.o

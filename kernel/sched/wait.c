@@ -441,3 +441,10 @@ int woken_wake_function(struct wait_queue_entry *wq_entry, unsigned mode, int sy
 	return default_wake_function(wq_entry, mode, sync, key);
 }
 EXPORT_SYMBOL(woken_wake_function);
+
+/* __wake_up_pollfree - backport from 5.14+ */
+void __wake_up_pollfree(struct wait_queue_head *wq_head)
+{
+	wake_up(wq_head);
+}
+EXPORT_SYMBOL_GPL(__wake_up_pollfree);

@@ -418,3 +418,10 @@ static int __init dev_map_init(void)
 }
 
 subsys_initcall(dev_map_init);
+
+/* __dev_map_hash_lookup_elem - hash-based devmap lookup */
+struct net_device *__dev_map_hash_lookup_elem(struct bpf_map *map, u32 key)
+{
+	return NULL;
+}
+EXPORT_SYMBOL(__dev_map_hash_lookup_elem);
