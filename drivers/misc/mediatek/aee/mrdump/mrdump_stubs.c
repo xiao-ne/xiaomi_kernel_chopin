@@ -20,3 +20,17 @@ EXPORT_SYMBOL_GPL(mrdump_shutdown);
 
 void mrdump_rsvmem_init(void) {}
 EXPORT_SYMBOL_GPL(mrdump_rsvmem_init);
+
+void mrdump_mini_add_misc(unsigned long addr, unsigned long size,
+			  unsigned long pa, const char *name) {}
+EXPORT_SYMBOL_GPL(mrdump_mini_add_misc);
+
+void mrdump_mini_add_hang_raw(unsigned long addr, unsigned long size) {}
+EXPORT_SYMBOL_GPL(mrdump_mini_add_hang_raw);
+
+void mrdump_mini_add_extra_misc(unsigned long addr, unsigned long size,
+			    const char *name) {}
+EXPORT_SYMBOL_GPL(mrdump_mini_add_extra_misc);
+
+void mrdump_common_die(const char *msg) {}
+EXPORT_SYMBOL_GPL(mrdump_common_die);
