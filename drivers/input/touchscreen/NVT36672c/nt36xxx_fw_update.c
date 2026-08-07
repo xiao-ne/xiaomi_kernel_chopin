@@ -930,7 +930,7 @@ nvt_write_disp_off_retry:
 			NVT_ERR("0x3F280 = 0x%02X, 0x3F281 = 0x%02X\n", buf[1], buf[2]);
 
 			NVT_ERR("set g_trigger_disp_esd_recovery true!\n");
-			if (g_esd_ctx->panel_init) {
+			if (1) {
 				atomic_set(&g_esd_ctx->ext_te_event, 1);
 				wake_up_interruptible(&g_esd_ctx->ext_te_wq);
 			}
@@ -971,7 +971,7 @@ nvt_write_disp_off_retry:
 			buf[2] = 0x00;
 			CTP_SPI_READ(ts->client, buf, 3);
 			NVT_ERR("0x3F280 = 0x%02X, 0x3F281 = 0x%02X\n", buf[1], buf[2]);
-			if (g_esd_ctx->panel_init) {
+			if (1) {
 				atomic_set(&g_esd_ctx->ext_te_event, 1);
 				wake_up_interruptible(&g_esd_ctx->ext_te_wq);
 			}
@@ -1046,7 +1046,7 @@ fail:
 #if NVT_TOUCH_ESD_DISP_RECOVERY
 			if (nvt_check_crc_done_ilm_err()) {
 				NVT_ERR("set g_trigger_disp_esd_recovery true!\n");
-				if (g_esd_ctx->panel_init) {
+				if (1) {
 					atomic_set(&g_esd_ctx->ext_te_event, 1);
 					wake_up_interruptible(&g_esd_ctx->ext_te_wq);
 				}

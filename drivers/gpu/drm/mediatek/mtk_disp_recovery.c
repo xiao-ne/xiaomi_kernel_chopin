@@ -551,7 +551,7 @@ static irqreturn_t _mi_esd_check_ext_te_irq_handler(int irq, void *data)
 	return IRQ_HANDLED;
 }
 
-static int mi_mtk_drm_esd_check_worker_kthread(void *data)
+static int mtk_drm_esd_check_worker_kthread(void *data)
 {
     struct sched_param param = { .sched_priority = 87 };
 	struct drm_crtc *crtc = (struct drm_crtc *)data;
@@ -607,6 +607,7 @@ static int mi_mtk_drm_esd_check_worker_kthread(void *data)
 #endif
 #endif
 
+#ifndef CONFIG_MI_ESD_CHECK
 static int mtk_drm_esd_check_worker_kthread(void *data)
 {
 	struct sched_param param = {.sched_priority = 87};
@@ -686,6 +687,7 @@ static int mtk_drm_esd_check_worker_kthread(void *data)
 	}
 	return 0;
 }
+#endif
 
 void mtk_disp_esd_check_switch(struct drm_crtc *crtc, bool enable)
 {
@@ -727,7 +729,7 @@ static void mtk_disp_esd_chk_deinit(struct drm_crtc *crtc)
 	kthread_stop(esd_ctx->disp_esd_chk_task);
 #else
 	/* Stop MI ESD kthread */
-	kthread_stop(esd_ctx->mi_disp_esd_chk_task);
+	kthread_stop(esd_ctx->disp_esd_chk_task);
 #endif
 	kfree(esd_ctx);
 }
@@ -774,10 +776,10 @@ static void mtk_disp_esd_chk_init(struct drm_crtc *crtc)
 #if !(defined(CONFIG_DRM_PANEL_K10A_36_02_0A_DSC_VDO) || defined(CONFIG_DRM_PANEL_K10A_42_02_0B_DSC_VDO))
 	wake_up_process(esd_ctx->disp_esd_chk_task);
 #else
-	esd_ctx->mi_disp_esd_chk_task = kthread_create(
-		mi_mtk_drm_esd_check_worker_kthread, crtc, "mi_disp_echk");
+	esd_ctx->disp_esd_chk_task = kthread_create(
+		mtk_drm_esd_check_worker_kthread, crtc, "mi_disp_echk");
 
-	wake_up_process(esd_ctx->mi_disp_esd_chk_task);
+	wake_up_process(esd_ctx->disp_esd_chk_task);
 #endif
 }
 

@@ -10,7 +10,7 @@
 
 #define EROFS_SUPER_OFFSET      1024
 /* EROFS magic number */
-#define EROFS_SUPER_MAGIC_V1    0xE0F5E101
+#define EROFS_SUPER_MAGIC_V1    0xE0F5E1E2
 
 #define EROFS_FEATURE_COMPAT_SB_CHKSUM          0x00000001
 

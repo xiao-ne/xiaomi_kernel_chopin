@@ -5,6 +5,11 @@
 /*
  * how to get the current stack pointer from C
  */
-register unsigned long current_stack_pointer asm ("sp");
+static inline unsigned long get_current_stack_pointer(void)
+{
+	unsigned long sp;
+	return sp;
+}
+#define current_stack_pointer get_current_stack_pointer()
 
 #endif /* __ASM_STACK_POINTER_H */

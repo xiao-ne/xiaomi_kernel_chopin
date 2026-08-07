@@ -106,7 +106,7 @@
 #define NVT_TOUCH_ESD_PROTECT					1
 #define NVT_TOUCH_ESD_CHECK_PERIOD				1500 /* ms */
 #define NVT_TOUCH_WDT_RECOVERY					1
-#define NVT_TOUCH_ESD_DISP_RECOVERY				1
+#define NVT_TOUCH_ESD_DISP_RECOVERY				0
 
 struct nvt_config_info {
 	u8 tp_vendor;

@@ -1245,7 +1245,6 @@ void nvt_esd_check_enable(uint8_t enable)
 	esd_check = enable;
 }
 
-extern struct mtk_drm_esd_ctx *g_esd_ctx;
 static void nvt_esd_check_func(struct work_struct *work)
 {
 	unsigned int timer = jiffies_to_msecs(jiffies - irq_timer);
@@ -1269,13 +1268,9 @@ static void nvt_esd_check_func(struct work_struct *work)
 			/* update esd_retry counter */
 			esd_retry++;
 		} else {
-			NVT_ERR("esd_retry = %d, g_trigger_disp_esd_recovery true\n", esd_retry);
-			if (g_esd_ctx->panel_init) {
-				atomic_set(&g_esd_ctx->ext_te_event, 1);
-				wake_up_interruptible(&g_esd_ctx->ext_te_wq);
-				nvt_esd_check_enable(false);
-				esd_retry = 0;
-			}
+			NVT_ERR("esd_retry = %d, esd check failed, resetting\n", esd_retry);
+			nvt_esd_check_enable(false);
+			esd_retry = 0;
 		}
 	}
 
@@ -2222,24 +2217,8 @@ static void nvt_resume_work(struct work_struct *work)
 }
 static void get_lockdown_info(struct work_struct *work)
 {
-	int ret = 0;
-
-	NVT_LOG("lkdown_readed = %d", ts->lkdown_readed);
-	if (!ts->lkdown_readed) {
-		ret = get_lockdown_info_for_nvt(ts->lockdown_info);
-		if (ret < 0)
-			NVT_ERR("can't get lockdown info");
-		NVT_LOG("Lockdown:0x%02x,0x%02x,0x%02x,0x%02x,0x%02x,0x%02x,0x%02x,0x%02x\n",
-			ts->lockdown_info[0], ts->lockdown_info[1], ts->lockdown_info[2], ts->lockdown_info[3],
-			ts->lockdown_info[4], ts->lockdown_info[5], ts->lockdown_info[6], ts->lockdown_info[7]);
-			ts->lkdown_readed = true;
-		NVT_LOG("READ LOCKDOWN!!!");
-	} else {
-		NVT_LOG("use lockdown info that readed before");
-		NVT_LOG("Lockdown:0x%02x,0x%02x,0x%02x,0x%02x,0x%02x,0x%02x,0x%02x,0x%02x\n",
-			ts->lockdown_info[0], ts->lockdown_info[1], ts->lockdown_info[2], ts->lockdown_info[3],
-			ts->lockdown_info[4], ts->lockdown_info[5], ts->lockdown_info[6], ts->lockdown_info[7]);
-	}
+	NVT_LOG("lkdown_readed = %d, skip DSI lockdown read to avoid early boot crash", ts->lkdown_readed);
+	ts->lkdown_readed = true;
 }
 
 /*******************************************************

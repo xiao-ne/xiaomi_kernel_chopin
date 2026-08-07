@@ -457,7 +457,7 @@ int erofs_try_to_free_all_cached_pages(struct erofs_sb_info *sbi,
 
 		/* barrier is implied in the following 'unlock_page' */
 		WRITE_ONCE(pcl->compressed_pages[i], NULL);
-		set_page_private(page, 0);
+		detach_page_private(page);
 		unlock_page(page);
 	}
 	return 0;
@@ -482,7 +482,7 @@ int erofs_try_to_free_cached_page(struct address_space *mapping,
 		erofs_workgroup_unfreeze(&pcl->obj, 1);
 
 		if (ret)
-			set_page_private(page, 0);
+			detach_page_private(page);
 	}
 	return ret;
 }
@@ -1253,7 +1253,7 @@ repeat:
 	 */
 	if (page->private == Z_EROFS_PREALLOCATED_PAGE) {
 		WRITE_ONCE(pcl->compressed_pages[nr], page);
-		set_page_private(page, 0);
+		detach_page_private(page);
 		tocache = true;
 		goto out_tocache;
 	}
@@ -1290,12 +1290,7 @@ repeat:
 			DBG_BUGON(!justfound);
 
 			justfound = 0;
-			set_page_private(page, (unsigned long)pcl);
-			SetPagePrivate(page);
-		}
-
-		/* no need to submit io if it is already up-to-date */
-		if (PageUptodate(page)) {
+			attach_page_private(page, pcl);
 			unlock_page(page);
 			page = NULL;
 		}
@@ -1325,7 +1320,7 @@ out_tocache:
 		set_page_private(page, Z_EROFS_SHORTLIVED_PAGE);
 		goto out;
 	}
-	set_page_private(page, (unsigned long)pcl);
+	attach_page_private(page, pcl);
 	/* drop a refcount added by allocpage (then we have 2 refs here) */
 	put_page(page);
 

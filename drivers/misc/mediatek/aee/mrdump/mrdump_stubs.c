@@ -12,25 +12,29 @@
  * without linker errors.
  */
 
-void mrdump_init(void) {}
+/* Stubs are weak so they yield to real implementations in
+ * mrdump_mini.o / mrdump_panic.o when both are linked.
+ */
+
+void __weak mrdump_init(void) {}
 EXPORT_SYMBOL_GPL(mrdump_init);
 
-void mrdump_shutdown(void) {}
+void __weak mrdump_shutdown(void) {}
 EXPORT_SYMBOL_GPL(mrdump_shutdown);
 
-void mrdump_rsvmem_init(void) {}
+void __weak mrdump_rsvmem_init(void) {}
 EXPORT_SYMBOL_GPL(mrdump_rsvmem_init);
 
-void mrdump_mini_add_misc(unsigned long addr, unsigned long size,
-			  unsigned long pa, const char *name) {}
+void __weak mrdump_mini_add_misc(unsigned long addr, unsigned long size,
+				  unsigned long pa, const char *name) {}
 EXPORT_SYMBOL_GPL(mrdump_mini_add_misc);
 
-void mrdump_mini_add_hang_raw(unsigned long addr, unsigned long size) {}
+void __weak mrdump_mini_add_hang_raw(unsigned long addr, unsigned long size) {}
 EXPORT_SYMBOL_GPL(mrdump_mini_add_hang_raw);
 
-void mrdump_mini_add_extra_misc(unsigned long addr, unsigned long size,
-			    const char *name) {}
+void __weak mrdump_mini_add_extra_misc(unsigned long addr, unsigned long size,
+				    const char *name) {}
 EXPORT_SYMBOL_GPL(mrdump_mini_add_extra_misc);
 
-void mrdump_common_die(const char *msg) {}
+void __weak mrdump_common_die(const char *msg) {}
 EXPORT_SYMBOL_GPL(mrdump_common_die);
