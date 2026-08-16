@@ -148,10 +148,12 @@ int mt6885_fe_trigger(struct snd_pcm_substream *substream, int cmd,
 	case SNDRV_PCM_TRIGGER_START:
 	case SNDRV_PCM_TRIGGER_RESUME:
 		/* set memif enable */
-		/*if (memif->vow_bargein_enable)
-			memif will be set by scp
+#if defined(CONFIG_MTK_VOW_BARGE_IN_SUPPORT)
+		if (memif->vow_bargein_enable)
+			/* memif will be set by scp */
 			ret = 0;
-		else*/
+		else
+#endif
 #if defined(CONFIG_SND_SOC_MTK_AUDIO_DSP)
 			/* with dsp enable, not to set when stop_threshold = ~(0U) */
 			if (runtime->stop_threshold == ~(0U))
