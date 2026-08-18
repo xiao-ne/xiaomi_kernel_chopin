@@ -135,3 +135,17 @@ all.config
 # fetched Android config fragments
 kernel/configs/android-*.cfg
 boot/stock_boot.img
+
+# Build logs (not for repo)
+error_*.log
+full_*.log
+error_detail_*.log
+
+# Release artifacts
+release/
+
+# Boot tools
+boot/
+
+# Build output
+out/
