@@ -2068,7 +2068,7 @@ static void mtk_output_dsi_enable(struct mtk_dsi *dsi,
 
 #ifdef CONFIG_MI_ESD_CHECK
 #if defined(CONFIG_DRM_PANEL_K10A_36_02_0A_DSC_VDO) || defined(CONFIG_DRM_PANEL_K10A_42_02_0B_DSC_VDO)
-		if (ext && ext->funcs && ext->funcs->reset)
+		if (ext && ext->funcs && ext->funcs->init)
 			ext->funcs->init(dsi->panel);
 #endif
 

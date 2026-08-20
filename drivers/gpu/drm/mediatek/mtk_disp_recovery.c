@@ -604,8 +604,8 @@ static int mtk_drm_esd_check_worker_kthread(void *data)
 	}
 	return 0;
 }
-#endif
-#endif
+#endif /* K10A panels */
+#endif /* CONFIG_MI_ESD_CHECK */
 
 #ifndef CONFIG_MI_ESD_CHECK
 static int mtk_drm_esd_check_worker_kthread(void *data)
