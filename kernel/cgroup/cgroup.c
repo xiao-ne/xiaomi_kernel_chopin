@@ -3559,13 +3559,14 @@ static int cgroup_file_open(struct kernfs_open_file *of)
 	get_cgroup_ns(ctx->ns);
 	of->priv = ctx;
 
-	if (!cft->open)
+	if (!cft || !cft->open)
 		return 0;
 
 	ret = cft->open(of);
 	if (ret) {
 		put_cgroup_ns(ctx->ns);
 		kfree(ctx);
+		of->priv = NULL;
 	}
 	return ret;
 }
@@ -3575,9 +3576,13 @@ static void cgroup_file_release(struct kernfs_open_file *of)
 	struct cftype *cft = of->kn->priv;
 	struct cgroup_file_ctx *ctx = of->priv;
 
-	if (cft->release)
+	if (!ctx)
+		return;
+
+	if (cft && cft->release)
 		cft->release(of);
-	put_cgroup_ns(ctx->ns);
+	if (ctx->ns)
+		put_cgroup_ns(ctx->ns);
 	kfree(ctx);
 }
 
@@ -3589,6 +3594,9 @@ static ssize_t cgroup_file_write(struct kernfs_open_file *of, char *buf,
 	struct cftype *cft = of->kn->priv;
 	struct cgroup_subsys_state *css;
 	int ret;
+
+	if (!ctx || !cgrp || !cft)
+		return -EINVAL;
 
 	/*
 	 * If namespaces are delegation boundaries, disallow writes to
@@ -3635,6 +3643,9 @@ static unsigned int cgroup_file_poll(struct kernfs_open_file *of,
 				     poll_table *pt)
 {
 	struct cftype *cft = of->kn->priv;
+
+	if (!cft)
+		return kernfs_generic_poll(of, pt);
 
 	if (cft->poll)
 		return cft->poll(of, pt);
