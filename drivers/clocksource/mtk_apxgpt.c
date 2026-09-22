@@ -1167,6 +1167,8 @@ CLOCKSOURCE_OF_DECLARE(mtk_apxgpt, APXGPT_OF_COMPTIBLE_NAME, mt_gpt_init);
  * Apxgpt un-initialization used when sys_timer is selected.
  */
 #if !defined(CONFIG_MTK_TIMER_APXGPT) && !defined(CONFIG_MTK_TIMER)
+extern struct mt_gpt_timers gpt_timers;
+extern struct mt_gpt_device gpt_devs[];
 
 static int __init mt_gpt_init(void)
 {
