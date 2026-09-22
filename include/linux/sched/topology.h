@@ -88,7 +88,19 @@ struct sched_group_energy {
 	unsigned int nr_idle_states;	/* number of idle states */
 	struct idle_state *idle_states;	/* ptr to idle state array */
 	unsigned int nr_cap_states;	/* number of capacity states */
+struct upower_tbl {
+	unsigned int row_num;
+	struct upower_tbl_row *row;
+	unsigned int lkg_idx;
+};
+
+struct upower_tbl_info {
+	struct upower_tbl *p_upower_tbl;
+};
+
+#define UPOWER_BANK_CLS_BASE 0
 #ifdef CONFIG_MTK_UNIFY_POWER
+struct upower_tbl_row { unsigned long cap; unsigned long volt; unsigned long dyn_pwr; unsigned long lkg_pwr[8]; };
 	struct upower_tbl_row *cap_states;
 	unsigned int lkg_idx;
 #else
@@ -261,3 +273,5 @@ static inline int task_node(const struct task_struct *p)
 }
 
 #endif /* _LINUX_SCHED_TOPOLOGY_H */
+
+/* MTK unify power structures */
