@@ -68,10 +68,7 @@ build_kernel() {
         sed -i 's/^CONFIG_COMMON_CLK_MT8183=y/# CONFIG_COMMON_CLK_MT8183 is not set/' "$config"
         sed -i 's/^CONFIG_PINCTRL_MT8183=y/# CONFIG_PINCTRL_MT8183 is not set/' "$config"
         sed -i 's/^CONFIG_MTK_AEE_IPANIC=y/# CONFIG_MTK_AEE_IPANIC is not set/' "$config"
-        # 诊断：关闭 oops 立即 panic，避免 1 秒重启、来不及留 pstore
-        sed -i 's/^CONFIG_PANIC_ON_OOPS=y/# CONFIG_PANIC_ON_OOPS is not set/' "$config"
-        sed -i 's/^CONFIG_PANIC_TIMEOUT=1/CONFIG_PANIC_TIMEOUT=0/' "$config"
-        echo "  缺失源文件配置已禁用；panic 策略已改为诊断模式"
+        echo "  缺失源文件配置已禁用"
     fi
 
     # 编译并保存完整日志（后台），同时实时显示错误
