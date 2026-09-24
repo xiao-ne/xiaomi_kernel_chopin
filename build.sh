@@ -13,10 +13,12 @@ CROSS_COMPILE_ARM32_PATH="arm-linux-gnueabi-"
 
 KERNEL_VERSION="Clang13"
 CLANG_VERSION="13"
-# EROFS fstab 注入：默认关闭。
-# Android 13 若 system/vendor 仍是 ext4，强插 erofs 且无 nofail 会导致 first_stage 挂载失败/循环重启。
-# 仅当 ROM 确认为 EROFS 分区时再设为 1：ENABLE_EROFS_FSTAB=1 bash build.sh
-ENABLE_EROFS_FSTAB="${ENABLE_EROFS_FSTAB:-0}"
+# EROFS fstab 注入策略:
+#   auto(默认): 打包时自动检测 —— ramdisk 已含 erofs 则跳过;
+#               adb 设备在线且 /proc/mounts 有 erofs 挂载则注入; 否则保守跳过
+#   ENABLE_EROFS_FSTAB=1  强制注入(目标 ROM 是 EROFS 但 fstab 缺条目时)
+#   ENABLE_EROFS_FSTAB=0  强制关闭
+ENABLE_EROFS_FSTAB="${ENABLE_EROFS_FSTAB:-auto}"
 
 # ==================== 工具函数 ====================
 abort() { echo "❌ $1"; exit 1; }
@@ -231,6 +233,30 @@ add_erofs_to_fstab() {
     rm -f "$tmp_fstab"
 }
 
+# 自动判断是否需要 EROFS fstab 注入
+# 参数: $1 = 已解包的 ramdisk 目录(含 first_stage_ramdisk/)
+# 返回: 0=需要注入  1=不需要
+auto_detect_erofs() {
+    local rd_dir="$1"
+    # 1) ramdisk fstab 已含 erofs 条目 → ROM 本身按 EROFS 出 fstab，无需注入
+    if grep -qE "^[a-z_]+ [^ ]+ erofs " "$rd_dir"/first_stage_ramdisk/fstab.* 2>/dev/null; then
+        echo "  🔍 ramdisk fstab 已含 erofs 条目 → ROM 为 EROFS 基线，无需注入"
+        return 1
+    fi
+    # 2) adb 设备在线: /proc/mounts 有 erofs 挂载 → 系统 EROFS 但 ramdisk 缺条目，需注入
+    if command -v adb >/dev/null 2>&1 && [ "$(adb get-state 2>/dev/null)" = "device" ]; then
+        if adb shell "grep -qw erofs /proc/mounts" 2>/dev/null; then
+            echo "  🔍 adb 在线且系统有 erofs 挂载，但 ramdisk 缺 erofs 条目 → 需要注入"
+            return 0
+        fi
+        echo "  🔍 adb 在线且无 erofs 挂载(ext4 系统) → 跳过注入"
+        return 1
+    fi
+    # 3) 无法判断 → 保守跳过(避免 ext4 ROM 强插 erofs 导致开机循环)
+    echo "  ℹ️  无法自动判断(无 adb 设备) → 跳过注入; EROFS ROM 请用 ENABLE_EROFS_FSTAB=1 强制"
+    return 1
+}
+
 pack_img() {
     local img_dir="$KERNEL_DIR/out/arch/arm64/boot"
     local boot_dir="$KERNEL_DIR/boot"
@@ -245,27 +271,40 @@ pack_img() {
     [ -f "$img_dir/dtb" ] && cp "$img_dir/dtb" .
     [ -f "$img_dir/dtbo.img" ] && cp "$img_dir/dtbo.img" .
 
-    # ========== EROFS fstab 检测与修复（默认关闭） ==========
-    if [ "${ENABLE_EROFS_FSTAB}" = "1" ]; then
-        echo "🔍 检查 ramdisk fstab 是否包含 erofs（ENABLE_EROFS_FSTAB=1）..."
-        if [ -f ramdisk.cpio ]; then
-            local rd_tmp="_rd_fix$$"
-            mkdir -p "$rd_tmp" && cd "$rd_tmp"
-            cpio -idm < ../ramdisk.cpio 2>/dev/null
+    # 显示 kernel 版本串（打包前最后确认，防 out/ 被别的构建污染刷错内核）
+    local _kver
+    if file kernel | grep -q "gzip"; then
+        _kver=$(zcat kernel 2>/dev/null | strings -a | grep -m1 "Linux version")
+    else
+        _kver=$(strings -a kernel | grep -m1 "Linux version")
+    fi
+    echo "🔍 kernel 版本: ${_kver:-未知}"
 
-            # 修复 first_stage_ramdisk 中的 fstab
+    # ========== EROFS fstab 自动检测与注入 ==========
+    # auto(默认)=自动检测; 1=强制注入; 0=强制关闭
+    local erofs_mode="${ENABLE_EROFS_FSTAB:-auto}"
+    if [ -f ramdisk.cpio ]; then
+        local rd_tmp="_rd_fix$$"
+        mkdir -p "$rd_tmp" && cd "$rd_tmp"
+        cpio -idm < ../ramdisk.cpio 2>/dev/null
+
+        local do_inject=""
+        case "$erofs_mode" in
+            1) do_inject=yes; echo "🔍 EROFS 注入: 强制开启 (ENABLE_EROFS_FSTAB=1)" ;;
+            0) echo "⏭  EROFS 注入: 强制关闭 (ENABLE_EROFS_FSTAB=0)" ;;
+            *) auto_detect_erofs . && do_inject=yes ;;
+        esac
+
+        if [ "$do_inject" = yes ]; then
+            # 注入 first_stage_ramdisk 中的 fstab
             for fstab in first_stage_ramdisk/fstab.*; do
                 [ -f "$fstab" ] && add_erofs_to_fstab "$fstab"
             done
-
-            # 重新打包 ramdisk
             find . | cpio -H newc -o 2>/dev/null > ../ramdisk.cpio
-            cd ..
-            rm -rf "$rd_tmp"
-            echo "✅ ramdisk 已更新"
+            echo "✅ ramdisk 已更新（erofs fstab）"
         fi
-    else
-        echo "⏭  跳过 EROFS fstab 注入（默认 ENABLE_EROFS_FSTAB=0，避免 ext4 ROM 开机循环）"
+        cd ..
+        rm -rf "$rd_tmp"
     fi
 
     local out="$RELEASE_DIR/boot-${KERNEL_VERSION}-${ts}.img"
