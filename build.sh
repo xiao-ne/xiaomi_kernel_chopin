@@ -13,6 +13,10 @@ CROSS_COMPILE_ARM32_PATH="arm-linux-gnueabi-"
 
 KERNEL_VERSION="Clang13"
 CLANG_VERSION="13"
+# EROFS fstab 注入：默认关闭。
+# Android 13 若 system/vendor 仍是 ext4，强插 erofs 且无 nofail 会导致 first_stage 挂载失败/循环重启。
+# 仅当 ROM 确认为 EROFS 分区时再设为 1：ENABLE_EROFS_FSTAB=1 bash build.sh
+ENABLE_EROFS_FSTAB="${ENABLE_EROFS_FSTAB:-0}"
 
 # ==================== 工具函数 ====================
 abort() { echo "❌ $1"; exit 1; }
@@ -62,7 +66,10 @@ build_kernel() {
         sed -i 's/^CONFIG_COMMON_CLK_MT8183=y/# CONFIG_COMMON_CLK_MT8183 is not set/' "$config"
         sed -i 's/^CONFIG_PINCTRL_MT8183=y/# CONFIG_PINCTRL_MT8183 is not set/' "$config"
         sed -i 's/^CONFIG_MTK_AEE_IPANIC=y/# CONFIG_MTK_AEE_IPANIC is not set/' "$config"
-        echo "  缺失源文件配置已禁用"
+        # 诊断：关闭 oops 立即 panic，避免 1 秒重启、来不及留 pstore
+        sed -i 's/^CONFIG_PANIC_ON_OOPS=y/# CONFIG_PANIC_ON_OOPS is not set/' "$config"
+        sed -i 's/^CONFIG_PANIC_TIMEOUT=1/CONFIG_PANIC_TIMEOUT=0/' "$config"
+        echo "  缺失源文件配置已禁用；panic 策略已改为诊断模式"
     fi
 
     # 编译并保存完整日志（后台），同时实时显示错误
@@ -238,23 +245,27 @@ pack_img() {
     [ -f "$img_dir/dtb" ] && cp "$img_dir/dtb" .
     [ -f "$img_dir/dtbo.img" ] && cp "$img_dir/dtbo.img" .
 
-    # ========== EROFS fstab 检测与修复 ==========
-    echo "🔍 检查 ramdisk fstab 是否包含 erofs..."
-    if [ -f ramdisk.cpio ]; then
-        local rd_tmp="_rd_fix$$"
-        mkdir -p "$rd_tmp" && cd "$rd_tmp"
-        cpio -idm < ../ramdisk.cpio 2>/dev/null
+    # ========== EROFS fstab 检测与修复（默认关闭） ==========
+    if [ "${ENABLE_EROFS_FSTAB}" = "1" ]; then
+        echo "🔍 检查 ramdisk fstab 是否包含 erofs（ENABLE_EROFS_FSTAB=1）..."
+        if [ -f ramdisk.cpio ]; then
+            local rd_tmp="_rd_fix$$"
+            mkdir -p "$rd_tmp" && cd "$rd_tmp"
+            cpio -idm < ../ramdisk.cpio 2>/dev/null
 
-        # 修复 first_stage_ramdisk 中的 fstab
-        for fstab in first_stage_ramdisk/fstab.*; do
-            [ -f "$fstab" ] && add_erofs_to_fstab "$fstab"
-        done
+            # 修复 first_stage_ramdisk 中的 fstab
+            for fstab in first_stage_ramdisk/fstab.*; do
+                [ -f "$fstab" ] && add_erofs_to_fstab "$fstab"
+            done
 
-        # 重新打包 ramdisk
-        find . | cpio -H newc -o 2>/dev/null > ../ramdisk.cpio
-        cd ..
-        rm -rf "$rd_tmp"
-        echo "✅ ramdisk 已更新"
+            # 重新打包 ramdisk
+            find . | cpio -H newc -o 2>/dev/null > ../ramdisk.cpio
+            cd ..
+            rm -rf "$rd_tmp"
+            echo "✅ ramdisk 已更新"
+        fi
+    else
+        echo "⏭  跳过 EROFS fstab 注入（默认 ENABLE_EROFS_FSTAB=0，避免 ext4 ROM 开机循环）"
     fi
 
     local out="$RELEASE_DIR/boot-${KERNEL_VERSION}-${ts}.img"
