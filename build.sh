@@ -39,6 +39,11 @@ build_kernel() {
     export CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32_PATH"
     export CLANG_TRIPLE=aarch64-linux-gnu-
 
+    # 预生成 uapi asm-generic 包装头 (rm -rf out 后首次 defconfig 需要, 否则 'asm/types.h' not found)
+    mkdir -p out/arch/arm64/include/generated/uapi out/arch/arm64/include/generated
+    make -f scripts/Makefile.asm-generic src=uapi/asm obj=out/arch/arm64/include/generated/uapi/asm srctree=. SRCARCH=arm64 || abort "uapi asm 包装头生成失败"
+    make -f scripts/Makefile.asm-generic src=asm obj=out/arch/arm64/include/generated/asm srctree=. SRCARCH=arm64 || abort "asm 包装头生成失败"
+
     # 配置内核
     make O=out CC="ccache clang-$CLANG_VERSION" "$DEFCONFIG" || abort "配置失败"
 
