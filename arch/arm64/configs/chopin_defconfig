@@ -552,3 +552,16 @@ CONFIG_SECURITYFS=y
 # KernelSU Next
 CONFIG_KSU=y
 CONFIG_KSU_MANUAL_HOOK=y
+
+# ===== 优化批1: 网络(BBR+fq) / 定时器(HZ300) / zram(lz4) =====
+# BBR 拥塞控制: 移动网络下吞吐/延迟更优; cubic 保留作 fallback
+CONFIG_TCP_CONG_BBR=y
+CONFIG_DEFAULT_BBR=y
+# fq qdisc: 与 BBR 配套的流隔离队列 (NET_SCH_DEFAULT 是默认qdisc选择的开关)
+CONFIG_NET_SCH_DEFAULT=y
+CONFIG_NET_SCH_FQ=y
+CONFIG_DEFAULT_FQ=y
+# HZ 300: Android 交互响应标准值 (Kconfig 默认 250)
+CONFIG_HZ_300=y
+# zram 压缩算法 lz4: 比默认 lzo 更快、swap 时 CPU 占用更低
+CONFIG_CRYPTO_LZ4=y
