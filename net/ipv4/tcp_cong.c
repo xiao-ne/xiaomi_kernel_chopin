@@ -232,9 +232,18 @@ int tcp_set_default_congestion_control(const char *name)
 #endif
 
 	if (ca) {
-		ca->flags |= TCP_CONG_NON_RESTRICTED;	/* default is always allowed */
-		list_move(&ca->list, &tcp_cong_list);
-		ret = 0;
+		/* Vendor /vendor/etc/init/networksetting.rc force-writes "bic" at
+		 * Android init and stomps the compiled-in default (bbr). Refuse only
+		 * that value as the global *default*; per-socket TCP_CONGESTION and
+		 * any other sysctl choice stay untouched. */
+		if (!strcmp(name, "bic")) {
+			pr_info("tcp: blocked default override to 'bic', keeping " CONFIG_DEFAULT_TCP_CONG "\n");
+			ret = 0;
+		} else {
+			ca->flags |= TCP_CONG_NON_RESTRICTED;	/* default is always allowed */
+			list_move(&ca->list, &tcp_cong_list);
+			ret = 0;
+		}
 	}
 	spin_unlock(&tcp_cong_list_lock);
 
