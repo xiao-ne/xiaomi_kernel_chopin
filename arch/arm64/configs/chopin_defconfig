@@ -577,10 +577,3 @@ CONFIG_CRYPTO_GHASH_ARM64_CE=y
 # 热任务优先3x A78 L-domain, 避免挤单B核; EAS multi-gear下的功耗/温度/并行度优化
 # 历史: 64e88d7ef(9-25 11:31启用) -> 3cf32dde4(21:39撤销); 当日实测无异常, 属清理性回滚
 CONFIG_MTK_SCHED_BL_FIRST=y
-
-# ===== 优化批3b: THP 透明大页 (9-25撤销后重开) =====
-# 默认madvise: 仅主动madvise(MADV_HUGEPAGE)的应用(游戏引擎)获得2MB页,
-# 系统整体RAM行为不变; 运行时可切 /sys/kernel/mm/transparent_hugepage/enabled
-# 历史: 5c18c83c1(9-25 13:45启用) -> 70493ae9d(15:19撤销); 当日实测无异常, 属清理性回滚
-CONFIG_TRANSPARENT_HUGEPAGE=y
-CONFIG_TRANSPARENT_HUGEPAGE_MADVISE=y
