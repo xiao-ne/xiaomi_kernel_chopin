@@ -565,3 +565,10 @@ CONFIG_DEFAULT_FQ=y
 CONFIG_HZ_300=y
 # zram 压缩算法 lz4: 比默认 lzo 更快、swap 时 CPU 占用更低
 CONFIG_CRYPTO_LZ4=y
+
+# ===== 优化批2: IO调度(deadline) + Wi-Fi硬件GHASH =====
+# 传统队列默认 cfq(机械盘设计) -> deadline: zram swap/loop/dm 走此路径,
+# eMMC 变体(ROM含fstab.emmc)的主存储亦走此路径; UFS走mq-deadline不受影响
+CONFIG_DEFAULT_DEADLINE=y
+# Wi-Fi WPA3/GCMP 每包加密走 ARMv8 CE 硬件 (原先落软GHASH)
+CONFIG_CRYPTO_GHASH_ARM64_CE=y
