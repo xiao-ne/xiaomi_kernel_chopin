@@ -2556,22 +2556,30 @@ static void mtk_crtc_update_ddp_state(struct drm_crtc *crtc,
 	mutex_lock(&mtk_drm->lyeblob_list_mutex);
 	prop_lye_idx = crtc_state->prop_val[CRTC_PROP_LYE_IDX];
 	/*set_hrt_bw for pan display ,set 4 for two RGB layer*/
-	if (index == 0 && prop_lye_idx == 0) {
-		DDPINFO("%s prop_lye_idx is 0, mode switch from %u to %u\n",
-			__func__,
+	if (index == 0 &&
+	    (prop_lye_idx == 0 ||
+	     old_mtk_state->prop_val[CRTC_PROP_DISP_MODE_IDX] !=
+	     crtc_state->prop_val[CRTC_PROP_DISP_MODE_IDX])) {
+		DDPINFO("%s prop_lye_idx is %u, mode switch from %u to %u\n",
+			__func__, prop_lye_idx,
 			old_mtk_state->prop_val[CRTC_PROP_DISP_MODE_IDX],
 			crtc_state->prop_val[CRTC_PROP_DISP_MODE_IDX]);
 		/*
-		 * prop_lye_idx is 0 when suspend. Update display mode to avoid
-		 * the dsi params not sync with the mode of new crtc state.
-		 * And switch fps immediately when suspend or resume
+		 * Run the mode switch whenever DISP_MODE_IDX changed, even
+		 * when prop_lye_idx != 0 (pan display / two-RGB-layer video
+		 * states): a non-zero lye index without a matching lyeblob
+		 * previously skipped the switch entirely, leaving the panel at
+		 * the old refresh while SF bookkeeping moved on - vsync model
+		 * vs physical desync -> slow-motion. switch_begin is a no-op
+		 * when old==new, so any double call is harmless.
 		 */
 		mtk_crtc_disp_mode_switch_begin(crtc,
 			old_crtc_state, crtc_state,
 			cmdq_handle);
+	}
+	if (index == 0 && prop_lye_idx == 0)
 		mtk_crtc_update_hrt_state(crtc, pan_disp_frame_weight,
 			cmdq_handle);
-	}
 	list_for_each_entry_safe(lyeblob_ids, next, &mtk_drm->lyeblob_head,
 				 list) {
 		if (lyeblob_ids->lye_idx > prop_lye_idx) {

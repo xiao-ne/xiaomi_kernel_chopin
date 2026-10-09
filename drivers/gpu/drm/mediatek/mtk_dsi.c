@@ -6089,6 +6089,16 @@ static void mtk_dsi_vdo_timing_change(struct mtk_dsi *dsi,
 
 		mtk_dsi_calc_vdo_timing(dsi);
 		mtk_dsi_porch_setting(comp, handle, DSI_HFP, dsi->hfp_byte);
+		/* Both porches change on 50->120 (VFP 549->54, HFP 484->20).
+		 * This branch used to write HFP only, leaving DSI_VFP_NL at
+		 * the stale 549 (line rate capped ~100Hz instead of 120),
+		 * and dsi->vm out of sync so idle exit wrote 549 back. */
+		if (fps_chg_index & DYNFPS_DSI_VFP) {
+			vfp = adjusted_mode.vsync_start -
+				adjusted_mode.vdisplay;
+			dsi->vm.vfront_porch = vfp;
+			mtk_dsi_porch_setting(comp, handle, DSI_VFP, vfp);
+		}
 
 		/*1.2 send cmd: send cmd*/
 		mtk_dsi_send_switch_cmd(dsi, handle, mtk_crtc, src_mode, adjusted_mode.vrefresh);
