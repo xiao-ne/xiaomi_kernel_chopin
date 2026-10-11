@@ -563,8 +563,7 @@ CONFIG_DEFAULT_BBR=y
 CONFIG_NET_SCH_DEFAULT=y
 CONFIG_NET_SCH_FQ=y
 CONFIG_DEFAULT_FQ=y
-# HZ 300: Android 交互响应标准值 (Kconfig 默认 250)
-CONFIG_HZ_300=y
+# HZ 回退到默认 250 (HZ300 与 A15 backport 组合疑似导致开机卡顿 ~5.5 分钟)
 # zram 压缩算法 lz4: 比默认 lzo 更快、swap 时 CPU 占用更低
 CONFIG_CRYPTO_LZ4=y
 
