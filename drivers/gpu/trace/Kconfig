@@ -2,3 +2,4 @@
 
 config TRACE_GPU_MEM
 	bool
+	default y

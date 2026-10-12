@@ -1300,9 +1300,14 @@ int mtk_cfg80211_connect(struct wiphy *wiphy,
 	prWpaInfo->ucRSNMfpCap = RSN_AUTH_MFP_DISABLED;
 #endif
 
+	/* WPA3-SAE uses RSN (WPA2) cipher suites. Treat VERSION_3 (and
+	 * VERSION_2|VERSION_3) as WPA2 so a WPA3 association that sets only
+	 * NL80211_WPA_VERSION_3 is not marked DISABLED (fixes WPA3-SAE).
+	 */
 	if (sme->crypto.wpa_versions & NL80211_WPA_VERSION_1)
 		prWpaInfo->u4WpaVersion = IW_AUTH_WPA_VERSION_WPA;
-	else if (sme->crypto.wpa_versions & NL80211_WPA_VERSION_2)
+	else if (sme->crypto.wpa_versions &
+		 (NL80211_WPA_VERSION_2 | NL80211_WPA_VERSION_3))
 		prWpaInfo->u4WpaVersion =
 			IW_AUTH_WPA_VERSION_WPA2;
 	else

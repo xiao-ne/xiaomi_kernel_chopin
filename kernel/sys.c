@@ -1193,11 +1193,15 @@ SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)
 	memcpy(&tmp, utsname(), sizeof(tmp));
 	up_read(&uts_sem);
 
-	/* Fake uname release for bpfloader/netbpfload/netd to pass Android 15 version check */
+	/* Fake uname release for bpfloader/netbpfload/netd.
+	 * Android 16 (since Beta 2) mandates a 5.4+ kernel for these daemons;
+	 * report 5.4.186 to pass the A16 bpfloader/netbpfload/netd version check.
+	 * (5.4.186 > 4.19.280, so it also still satisfies any A15-era check.)
+	 */
 	if (!strncmp(current->comm, "bpfloader", 9) ||
 	    !strncmp(current->comm, "netbpfload", 10) ||
 	    !strncmp(current->comm, "netd", 4)) {
-		strcpy(tmp.release, "4.19.280");
+		strcpy(tmp.release, "5.4.186");
 		pr_debug("fake uname: %s release=%s\n", current->comm, tmp.release);
 	}
 
