@@ -8,6 +8,8 @@
 #include <linux/export.h>
 #include <linux/mm.h>
 #include <linux/utsname.h>
+#include <linux/kobject.h>
+#include <linux/sysfs.h>
 #include <linux/mman.h>
 #include <linux/reboot.h>
 #include <linux/prctl.h>
@@ -1185,6 +1187,51 @@ static int override_release(char __user *release, size_t len)
 	return ret;
 }
 
+/*
+ * Adaptive fake uname release for bpfloader/netbpfload/netd.
+ * Default "4.19.280" is safe for Android 13-era userspace (bpfloader
+ * accepts a 4.19 spoof). For Android 16 (since Beta 2) write "5.4.186"
+ * to /sys/kernel/fake_uname_release so those daemons pass the A16
+ * 5.4+ kernel check. Switching is a runtime write, no reflash needed.
+ */
+static char fake_uts_release[64] = "4.19.280";
+
+static ssize_t fake_uname_release_show(struct kobject *kobj,
+				       struct kobj_attribute *attr, char *buf)
+{
+	return scnprintf(buf, PAGE_SIZE, "%s\n", fake_uts_release);
+}
+
+static ssize_t fake_uname_release_store(struct kobject *kobj,
+					struct kobj_attribute *attr,
+					const char *buf, size_t count)
+{
+	size_t len = count;
+
+	if (len > 0 && buf[len - 1] == '\n')
+		len--;
+	if (len >= sizeof(fake_uts_release))
+		len = sizeof(fake_uts_release) - 1;
+	memcpy(fake_uts_release, buf, len);
+	fake_uts_release[len] = '\0';
+	return count;
+}
+
+static struct kobj_attribute fake_uname_release_attr =
+	__ATTR(fake_uname_release, 0644, fake_uname_release_show,
+	       fake_uname_release_store);
+
+static int __init fake_uname_release_init(void)
+{
+	int ret;
+
+	ret = sysfs_create_file(&kernel_kobj, &fake_uname_release_attr.attr);
+	if (ret)
+		pr_warn("failed to create fake_uname_release sysfs: %d\n", ret);
+	return ret;
+}
+late_initcall(fake_uname_release_init);
+
 SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)
 {
 	struct new_utsname tmp;
@@ -1194,14 +1241,13 @@ SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)
 	up_read(&uts_sem);
 
 	/* Fake uname release for bpfloader/netbpfload/netd.
-	 * Android 16 (since Beta 2) mandates a 5.4+ kernel for these daemons;
-	 * report 5.4.186 to pass the A16 bpfloader/netbpfload/netd version check.
-	 * (5.4.186 > 4.19.280, so it also still satisfies any A15-era check.)
+	 * Version string is adaptive via /sys/kernel/fake_uname_release;
+	 * default 4.19.280 (Android 13-safe), write 5.4.186 for Android 16.
 	 */
 	if (!strncmp(current->comm, "bpfloader", 9) ||
 	    !strncmp(current->comm, "netbpfload", 10) ||
 	    !strncmp(current->comm, "netd", 4)) {
-		strcpy(tmp.release, "5.4.186");
+		strscpy(tmp.release, fake_uts_release, sizeof(tmp.release));
 		pr_debug("fake uname: %s release=%s\n", current->comm, tmp.release);
 	}
 
