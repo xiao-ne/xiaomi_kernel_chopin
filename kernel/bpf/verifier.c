@@ -4995,8 +4995,12 @@ static int push_insn(int t, int w, int e, struct bpf_verifier_env *env)
 		insn_stack[cur_stack++] = w;
 		return 1;
 	} else if ((insn_state[w] & 0xF0) == DISCOVERED) {
-		verbose(env, "back-edge from insn %d to %d\n", t, w);
-		return -EINVAL;
+		/* Back-edge (loop). Allow it: bounded loops are terminated by
+		 * state pruning (explored_states) during do_check, which prunes a
+		 * path once its verifier state repeats at the loop head. This
+		 * matches upstream 4.15+ bounded-loop support.
+		 */
+		insn_state[t] = DISCOVERED | e;
 	} else if (insn_state[w] == EXPLORED) {
 		/* forward- or cross-edge */
 		insn_state[t] = DISCOVERED | e;

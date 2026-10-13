@@ -13,6 +13,7 @@
 #include <linux/prctl.h>
 #include <linux/highuid.h>
 #include <linux/fs.h>
+#include <linux/string.h>
 #include <linux/kmod.h>
 #include <linux/perf_event.h>
 #include <linux/resource.h>
@@ -1187,13 +1188,54 @@ static int override_release(char __user *release, size_t len)
 
 /*
  * Adaptive fake uname release for bpfloader/netbpfload/netd.
- * Default "4.19.280" is safe for Android 13-era userspace. For Android 16
- * (since Beta 2) pass fake_uname_release=5.4.186 on the kernel cmdline so
- * those daemons pass the A16 5.4+ kernel check. No sysfs/proc: this uses
- * the core __setup cmdline mechanism (very early, battle-tested) to avoid
- * the bootloop the sysfs approach caused.
+ *
+ * Android 16 (since Beta 2) requires a 5.4+ kernel for these daemons;
+ * older Android (13/14/15) bpfloader fails on a 5.4 string (it tries to
+ * load 5.4-era BPF programs the 4.14 kernel lacks -> reboot_on_failure
+ * bootloop). One kernel must boot both, so we detect the Android version
+ * at runtime: read ro.build.version.sdk from /system/build.prop on first
+ * use, cache it, and report 5.4.186 for API >= 36 (Android 16), else
+ * 4.19.280.
+ *
+ * An optional cmdline override (fake_uname_release=...) still wins if set,
+ * for manual control. This uses no sysfs/proc (those caused bootloops).
  */
 static char fake_uts_release[64] = "4.19.280";
+static bool cmdline_override;
+static int cached_android_sdk = -1;
+
+static int detect_android_sdk(void)
+{
+	struct file *f;
+	char buf[2048];
+	loff_t pos = 0;
+	ssize_t n;
+	char *p;
+	int sdk;
+
+	if (cached_android_sdk >= 0)
+		return cached_android_sdk;
+
+	f = filp_open("/system/build.prop", O_RDONLY, 0);
+	if (IS_ERR(f))
+		return -1;
+
+	n = kernel_read(f, buf, sizeof(buf) - 1, &pos);
+	filp_close(f, NULL);
+	if (n <= 0)
+		return -1;
+	buf[n] = '\0';
+
+	sdk = -1;
+	p = strstr(buf, "ro.build.version.sdk=");
+	if (p) {
+		p += strlen("ro.build.version.sdk=");
+		sdk = simple_strtol(p, NULL, 10);
+	}
+
+	cached_android_sdk = sdk;
+	return sdk;
+}
 
 static int __init fake_uname_setup(char *str)
 {
@@ -1204,6 +1246,7 @@ static int __init fake_uname_setup(char *str)
 	for (i = 0; i < sizeof(fake_uts_release) - 1 && str[i]; i++)
 		fake_uts_release[i] = str[i];
 	fake_uts_release[i] = '\0';
+	cmdline_override = true;
 	return 1;
 }
 __setup("fake_uname_release=", fake_uname_setup);
@@ -1217,13 +1260,22 @@ SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)
 	up_read(&uts_sem);
 
 	/* Fake uname release for bpfloader/netbpfload/netd.
-	 * Version is adaptive via cmdline (fake_uname_release=...);
-	 * default 4.19.280 (Android 13-safe), pass 5.4.186 for Android 16.
+	 * Auto-detect Android version (A16 -> 5.4.186, else 4.19.280);
+	 * cmdline fake_uname_release=... overrides if set.
 	 */
 	if (!strncmp(current->comm, "bpfloader", 9) ||
 	    !strncmp(current->comm, "netbpfload", 10) ||
 	    !strncmp(current->comm, "netd", 4)) {
-		strcpy(tmp.release, fake_uts_release);
+		if (cmdline_override) {
+			strcpy(tmp.release, fake_uts_release);
+		} else {
+			int sdk = detect_android_sdk();
+
+			if (sdk >= 36)
+				strcpy(tmp.release, "5.4.186");
+			else
+				strcpy(tmp.release, "4.19.280");
+		}
 		pr_debug("fake uname: %s release=%s\n", current->comm, tmp.release);
 	}
 

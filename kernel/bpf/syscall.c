@@ -122,6 +122,15 @@ static struct bpf_map *find_and_alloc_map(union bpf_attr *attr)
 		if (err)
 			return ERR_PTR(err);
 	}
+	/* Newer userspace (e.g. Android 16 netbpfload) may request map types
+	 * whose ops exist but lack map_alloc; calling a NULL map_alloc oopses
+	 * the kernel (pc=0 in map_create). Fail gracefully instead.
+	 */
+	if (!ops->map_alloc) {
+		pr_err("bpf: map_type %u has NULL map_alloc (unsupported)\n",
+		       attr->map_type);
+		return ERR_PTR(-EINVAL);
+	}
 	map = ops->map_alloc(attr);
 	if (IS_ERR(map))
 		return map;
