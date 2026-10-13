@@ -578,3 +578,8 @@ CONFIG_CRYPTO_GHASH_ARM64_CE=y
 # 热任务优先3x A78 L-domain, 避免挤单B核; EAS multi-gear下的功耗/温度/并行度优化
 # 历史: 64e88d7ef(9-25 11:31启用) -> 3cf32dde4(21:39撤销); 当日实测无异常, 属清理性回滚
 CONFIG_MTK_SCHED_BL_FIRST=y
+
+# ===== 优化3c: PSI for Android 16 LMKD =====
+# A16 LMKD 依赖 /proc/pressure/* 进行内存压力监控; 缺失时回退旧判定,
+# 持续负载下表现为动画掉帧/卡顿. cgroup2 亦暴露 memory.pressure.
+CONFIG_PSI=y
