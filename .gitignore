@@ -143,3 +143,14 @@ boot/
 
 # Build output
 out/
+
+# Android 17 port: upstream reference trees and scratch artifacts
+/upstream/
+*.bak
+*.bak414
+*.backup
+*.backup2
+*.incomplete
+*.new
+/ramdisk.cpio
+/dtb/

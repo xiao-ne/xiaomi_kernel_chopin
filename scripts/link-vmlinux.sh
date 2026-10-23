@@ -35,6 +35,11 @@
 # Error out on error
 set -e
 
+# pahole is used to convert the DWARF debug info of the vmlinux image into
+# BTF type information.  It is a host tool and can be overridden from the
+# command line, e.g. "make PAHOLE=/path/to/pahole".
+PAHOLE=${PAHOLE:-pahole}
+
 # Nice output in kbuild format
 # Will be supressed by "make -s"
 info()
@@ -202,6 +207,71 @@ vmlinux_link()
 	fi
 }
 
+# Generate BTF type information from the DWARF debug info of the vmlinux
+# image and store the raw BTF blob in ${1} as an object file that can be
+# linked into the final vmlinux.
+#
+# ${1} - file to dump the raw BTF data into
+gen_btf()
+{
+	local btf_bin_o=${1}
+	local vmlinux_btf=.tmp_vmlinux.btf
+	local pahole_ver
+	local extra_paholeopt=
+
+	if ! [ -x "$(command -v ${PAHOLE})" ]; then
+		echo >&2 "BTF: pahole (${PAHOLE}) is not available, skipping BTF generation"
+		return 1
+	fi
+
+	# pahole-version.sh prints the major/minor version as a 3-digit
+	# number, e.g. 119 for v1.19.  Some pahole releases print a patch
+	# level ("v1.24.0") and/or a program prefix, so keep the leading
+	# digits of the version number only.
+	pahole_ver=$(${srctree}/scripts/pahole-version.sh ${PAHOLE} 2>/dev/null | sed -E 's/^[^0-9]*([0-9]+).*$/\1/' || true)
+	if [ -z "${pahole_ver}" ] || [ "${pahole_ver}" -lt "116" ]; then
+		echo >&2 "BTF: pahole version $(${PAHOLE} --version) is too old, need at least v1.16, skipping BTF generation"
+		return 1
+	fi
+
+	# pahole needs a fully linked vmlinux image carrying the DWARF info
+	vmlinux_link "" ${vmlinux_btf}
+
+	if [ "${pahole_ver}" -ge "118" ] && [ "${pahole_ver}" -le "121" ]; then
+		# pahole 1.18 through 1.21 can't handle zero-sized per-CPU vars
+		extra_paholeopt="${extra_paholeopt} --skip_encoding_btf_vars"
+	fi
+	if [ "${pahole_ver}" -ge "121" ]; then
+		extra_paholeopt="${extra_paholeopt} --btf_gen_floats"
+	fi
+
+	info BTF ${btf_bin_o}
+	LLVM_OBJCOPY="${OBJCOPY}" ${PAHOLE} -J ${extra_paholeopt} ${vmlinux_btf} || {
+		echo >&2 "BTF: pahole failed to encode BTF from ${vmlinux_btf}"
+		return 1
+	}
+
+	# Create ${btf_bin_o} which contains just the .BTF section but no
+	# symbols.  Add SHF_ALLOC because .BTF will be part of the vmlinux
+	# image.  --strip-all deletes all symbols including __start_BTF and
+	# __stop_BTF, which are defined by the linker script instead.
+	${OBJCOPY} --only-section=.BTF --set-section-flags .BTF=alloc,readonly \
+		--strip-all ${vmlinux_btf} ${btf_bin_o} 2>/dev/null || {
+		echo >&2 "BTF: failed to extract .BTF section from ${vmlinux_btf}"
+		return 1
+	}
+	if ! [ -s ${btf_bin_o} ]; then
+		echo >&2 "BTF: ${btf_bin_o} is empty, no BTF generated"
+		return 1
+	fi
+	# Change e_type to ET_REL so that it can be linked into the final
+	# vmlinux.  Unlike GNU ld, lld does not allow an ET_EXEC input.
+	printf '\1' | dd of=${btf_bin_o} conv=notrunc bs=1 seek=16 status=none
+
+	rm -f ${vmlinux_btf}
+	return 0
+}
+
 # Create ${2} .o file with all symbols from the ${1} object file
 kallsyms()
 {
@@ -254,6 +324,7 @@ cleanup()
 	rm -f .tmp_version
 	rm -f .tmp_lto.lds
 	rm -f .tmp_vmlinux*
+	rm -f .btf.*
 	rm -f built-in.o
 	rm -f System.map
 	rm -f vmlinux
@@ -330,6 +401,20 @@ if [ -n "${CONFIG_LTO_CLANG}" ]; then
 	recordmcount vmlinux.o
 fi
 
+# Generate the BTF type information of the vmlinux image, if requested.
+# The resulting blob is linked into vmlinux and exported to user space
+# at /sys/kernel/btf/vmlinux.  A failure here is not fatal: the build
+# simply continues without BTF.
+btf_vmlinux_bin_o=""
+if [ -n "${CONFIG_DEBUG_INFO_BTF}" ]; then
+	btf_vmlinux_bin_o=.btf.vmlinux.bin.o
+	if ! gen_btf ${btf_vmlinux_bin_o}; then
+		echo >&2 "Warning: failed to generate BTF for vmlinux, continuing without BTF"
+		rm -f ${btf_vmlinux_bin_o}
+		btf_vmlinux_bin_o=""
+	fi
+fi
+
 kallsymso=""
 kallsyms_vmlinux=""
 if [ -n "${CONFIG_KALLSYMS}" ]; then
@@ -361,11 +446,11 @@ if [ -n "${CONFIG_KALLSYMS}" ]; then
 	kallsyms_vmlinux=.tmp_vmlinux2
 
 	# step 1
-	vmlinux_link "" .tmp_vmlinux1
+	vmlinux_link "${btf_vmlinux_bin_o}" .tmp_vmlinux1
 	kallsyms .tmp_vmlinux1 .tmp_kallsyms1.o
 
 	# step 2
-	vmlinux_link .tmp_kallsyms1.o .tmp_vmlinux2
+	vmlinux_link ".tmp_kallsyms1.o ${btf_vmlinux_bin_o}" .tmp_vmlinux2
 	kallsyms .tmp_vmlinux2 .tmp_kallsyms2.o
 
 	# step 3
@@ -376,14 +461,14 @@ if [ -n "${CONFIG_KALLSYMS}" ]; then
 		kallsymso=.tmp_kallsyms3.o
 		kallsyms_vmlinux=.tmp_vmlinux3
 
-		vmlinux_link .tmp_kallsyms2.o .tmp_vmlinux3
+		vmlinux_link ".tmp_kallsyms2.o ${btf_vmlinux_bin_o}" .tmp_vmlinux3
 
 		kallsyms .tmp_vmlinux3 .tmp_kallsyms3.o
 	fi
 fi
 
 info LD vmlinux
-vmlinux_link "${kallsymso}" vmlinux
+vmlinux_link "${kallsymso} ${btf_vmlinux_bin_o}" vmlinux
 
 if [ -n "${CONFIG_BUILDTIME_EXTABLE_SORT}" ]; then
 	info SORTEX vmlinux

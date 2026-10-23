@@ -17,3 +17,4 @@ obj-$(CONFIG_CGROUP_BPF) += cgroup.o cgroup_stubs.o
 obj-$(CONFIG_BPF_SYSCALL) += btf.o offload.o
 obj-$(CONFIG_BPF_SYSCALL) += cpumap.o local_storage.o
 obj-$(CONFIG_BPF_SYSCALL) += disasm.o
+obj-$(CONFIG_DEBUG_INFO_BTF) += sysfs_btf.o

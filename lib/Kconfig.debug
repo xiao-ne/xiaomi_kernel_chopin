@@ -188,6 +188,23 @@ config DEBUG_INFO_DWARF4
 	  But it significantly improves the success of resolving
 	  variables in gdb on optimized code.
 
+config DEBUG_INFO_BTF
+	bool "Generate BTF typeinfo"
+	depends on DEBUG_INFO && !DEBUG_INFO_REDUCED && !DEBUG_INFO_SPLIT
+	help
+	  Generate deduplicated BTF type information from DWARF debug info.
+	  Turning this on expects presence of pahole tool, which will convert
+	  DWARF type info into equivalent deduplicated BTF type info.
+
+	  The resulting BTF blob is embedded into the vmlinux image and is
+	  exported to user space at /sys/kernel/btf/vmlinux, which is what
+	  libbpf uses for CO-RE relocation.
+
+	  pahole v1.16 or newer is required.  The version is checked at
+	  build time with scripts/pahole-version.sh;  if pahole is missing
+	  or too old the build still succeeds, only no BTF is generated
+	  and /sys/kernel/btf/vmlinux will not exist.
+
 config GDB_SCRIPTS
 	bool "Provide GDB scripts for kernel debugging"
 	depends on DEBUG_INFO

@@ -3,6 +3,13 @@
 # ==================== 配置区 ====================
 source ~/.bashrc && source ~/.profile
 
+# pahole (dwarves) 免 root 安装在 ~/local-tools，用于生成 vmlinux BTF
+# (CONFIG_DEBUG_INFO_BTF)。Ubuntu 的 ~/.bashrc 对非交互 shell 会 early return,
+# 所以这里显式补一次 PATH，避免 BTF 被静默跳过。
+if [ -x "$HOME/local-tools/root/usr/bin/pahole" ]; then
+    export PATH="$HOME/local-tools/root/usr/bin:$PATH"
+fi
+
 KERNEL_DIR="$HOME/xiaomi_kernel_chopin"
 DEFCONFIG="chopin_defconfig"
 RELEASE_DIR="$KERNEL_DIR/release"
@@ -68,6 +75,13 @@ build_kernel() {
         sed -i 's/^CONFIG_PINCTRL_MT8183=y/# CONFIG_PINCTRL_MT8183 is not set/' "$config"
         sed -i 's/^CONFIG_MTK_AEE_IPANIC=y/# CONFIG_MTK_AEE_IPANIC is not set/' "$config"
         echo "  缺失源文件配置已禁用"
+    fi
+
+    # CONFIG_DEBUG_INFO_BTF 需要 pahole；缺了不会报错，只会静默不生成 BTF，
+    # 而 Android 17 的 CO-RE 依赖 /sys/kernel/btf/vmlinux，所以这里直接拦住。
+    if grep -q '^CONFIG_DEBUG_INFO_BTF=y' "$config" 2>/dev/null; then
+        command -v pahole > /dev/null || abort "pahole 未安装 - BTF 不会生成，Android 17 CO-RE 会失败"
+        ok "pahole: $(pahole --version 2>&1 | head -1)"
     fi
 
     # 编译并保存完整日志（后台），同时实时显示错误
@@ -347,6 +361,7 @@ show_error() {
 }
 
 # ==================== 主流程 ====================
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 setup_once
 mkdir -p "$RELEASE_DIR"
 ccache -M 32G
@@ -379,3 +394,4 @@ ls -lh "$RELEASE_DIR"/*.img 2>/dev/null
 echo ""
 echo "📋 日志文件:"
 ls -lth "$KERNEL_DIR"/*_*.log 2>/dev/null | head -5
+fi
