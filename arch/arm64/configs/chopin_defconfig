@@ -583,3 +583,15 @@ CONFIG_MTK_SCHED_BL_FIRST=y
 # A16 LMKD 依赖 /proc/pressure/* 进行内存压力监控; 缺失时回退旧判定,
 # 持续负载下表现为动画掉帧/卡顿. cgroup2 亦暴露 memory.pressure.
 CONFIG_PSI=y
+
+# ===== Android 17 cgroup2 controllers (分步移植 STEP 1) =====
+# Android 的 libprocessgroup 按 /system/etc/cgroups.json 逐个挂载控制器;
+# 内核里没有的控制器会让 SetupCgroups() 失败, init 就无法为任何服务
+# createProcessGroup(), A17 上表现为 ueventd/apexd-bootstrap
+# "No such file or directory" 后反复重启.
+# 基线已有 cgroups/cpusets/freezer/cpuacct/sched/cgroup-bpf(A16 遗留),
+# 这里补齐 blkio 与 device/pids/perf 四个.
+CONFIG_BLK_CGROUP=y
+CONFIG_CGROUP_DEVICE=y
+CONFIG_CGROUP_PIDS=y
+CONFIG_CGROUP_PERF=y
