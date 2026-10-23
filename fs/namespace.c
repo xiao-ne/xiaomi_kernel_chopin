@@ -133,6 +133,7 @@ retry:
 static void mnt_free_id(struct mount *mnt)
 {
 	int id = mnt->mnt_id;
+	if (!id) return;
 
 #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 	if (id >= DEFAULT_KSU_MNT_ID) {

@@ -1292,9 +1292,11 @@ static struct ctl_table kern_table[] = {
 		.data		= &sysctl_unprivileged_bpf_disabled,
 		.maxlen		= sizeof(sysctl_unprivileged_bpf_disabled),
 		.mode		= 0644,
-		/* only handle a transition from default "0" to "1" */
+		/* Android 14+ netbpfload writes 0 here before loading programs;
+		 * upstream 4.14 only allows the 0->1 transition, which makes
+		 * bpfloader exit 23 and init reboot with bpfloader-failed. */
 		.proc_handler	= proc_dointvec_minmax,
-		.extra1		= &one,
+		.extra1		= &zero,
 		.extra2		= &one,
 	},
 #endif

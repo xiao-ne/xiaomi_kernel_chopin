@@ -1260,8 +1260,16 @@ SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)
 	up_read(&uts_sem);
 
 	/* Fake uname release for bpfloader/netbpfload/netd.
-	 * Auto-detect Android version (A16 -> 5.4.186, else 4.19.280);
-	 * cmdline fake_uname_release=... overrides if set.
+	 *
+	 * Android's bpf loader selects its program set from the reported kernel
+	 * version, and Android 17 (API 37) supports 5.10 and newer only.  This
+	 * kernel is 4.14, so report the LOWEST version Android 17 accepts:
+	 * 5.10.x.  Reporting something higher (as the previous code did with
+	 * 6.6.0) makes the loader believe 6.1+ features exist and attempt to use
+	 * them; the verifier would then reject those programs.
+	 *
+	 * Android 16 (API 36) needs 5.4.x, older releases 4.19.x.
+	 * An explicit cmdline override (fake_uname_release=...) always wins.
 	 */
 	if (!strncmp(current->comm, "bpfloader", 9) ||
 	    !strncmp(current->comm, "netbpfload", 10) ||
@@ -1271,7 +1279,9 @@ SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)
 		} else {
 			int sdk = detect_android_sdk();
 
-			if (sdk >= 36)
+			if (sdk >= 37)
+				strcpy(tmp.release, "5.10.209");
+			else if (sdk >= 36)
 				strcpy(tmp.release, "5.4.186");
 			else
 				strcpy(tmp.release, "4.19.280");
