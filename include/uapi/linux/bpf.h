@@ -93,6 +93,7 @@ enum bpf_cmd {
 	BPF_PROG_ATTACH,
 	BPF_PROG_DETACH,
 	BPF_PROG_TEST_RUN,
+	BPF_PROG_RUN,
 	BPF_PROG_GET_NEXT_ID,
 	BPF_MAP_GET_NEXT_ID,
 	BPF_PROG_GET_FD_BY_ID,
@@ -100,8 +101,25 @@ enum bpf_cmd {
 	BPF_OBJ_GET_INFO_BY_FD,
 	BPF_PROG_QUERY,
 	BPF_RAW_TRACEPOINT_OPEN,
-	BPF_BTF_LOAD = 18,
-	BPF_BTF_GET_FD_BY_ID = 19,
+	BPF_BTF_LOAD,
+	BPF_BTF_GET_FD_BY_ID,
+	BPF_TASK_FD_QUERY,
+	BPF_MAP_LOOKUP_AND_DELETE_ELEM,
+	BPF_MAP_FREEZE,
+	BPF_BTF_GET_NEXT_ID,
+	BPF_MAP_LOOKUP_BATCH,
+	BPF_MAP_LOOKUP_AND_DELETE_BATCH,
+	BPF_MAP_UPDATE_BATCH,
+	BPF_MAP_DELETE_BATCH,
+	BPF_LINK_CREATE,
+	BPF_LINK_UPDATE,
+	BPF_LINK_GET_FD_BY_ID,
+	BPF_LINK_GET_NEXT_ID,
+	BPF_ENABLE_STATS,
+	BPF_ITER_CREATE,
+	BPF_LINK_DETACH,
+	BPF_PROG_BIND_MAP,
+	__NR_BPF_CNT,
 };
 
 enum bpf_map_type {
@@ -127,6 +145,7 @@ enum bpf_map_type {
 	BPF_MAP_TYPE_PERCPU_CGROUP_STORAGE = 21,
 	BPF_MAP_TYPE_SK_STORAGE = 24,
 	BPF_MAP_TYPE_DEVMAP_HASH = 25,
+	BPF_MAP_TYPE_RINGBUF = 27,
 };
 
 enum bpf_prog_type {
@@ -399,6 +418,24 @@ union bpf_attr {
 		__u32		btf_log_size;
 		__u32		btf_log_level;
 	};
+
+	struct { /* struct used by BPF_LINK_CREATE command */
+		__u32		prog_fd;		/* FD of BPF program to attach */
+		__u32		target_obj_fd;	/* FD of target object to attach to */
+		__u32		attach_type;	/* attach type (enum bpf_attach_type) */
+		__u32		attach_flags;	/* attach flags */
+	} link_create;
+
+	struct { /* struct used by BPF_LINK_UPDATE command */
+		__u32		link_fd;	/* FD of existing link to update */
+		__u32		new_prog_fd;	/* FD of new BPF program */
+		__u32		flags;		/* update flags */
+		__u32		old_prog_fd;	/* expected link's program fd */
+	} link_update;
+
+	struct { /* struct used by BPF_LINK_DETACH command */
+		__u32		link_fd;			/* FD of link to detach */
+	} link_detach;
 } __attribute__((aligned(8)));
 
 /* BPF helper function descriptions:
@@ -1094,7 +1131,15 @@ union bpf_attr {
 	FN(get_netns_cookie),		\
 	FN(get_current_ancestor_cgroup_id),	\
 	FN(sk_assign),			\
-	FN(ktime_get_boot_ns),
+	FN(ktime_get_boot_ns),		\
+	FN(seq_printf),			\
+	FN(seq_write),			\
+	FN(sk_cgroup_id),		\
+	FN(sk_ancestor_cgroup_id),	\
+	FN(ringbuf_output),		\
+	FN(ringbuf_reserve),		\
+	FN(ringbuf_submit),		\
+	FN(ringbuf_discard),
 
 /* integer value in 'imm' field of BPF_CALL instruction selects which helper
  * function eBPF program intends to call
