@@ -1765,6 +1765,14 @@ static int parse_cgroup_root_flags(char *data, unsigned int *root_flags)
 			continue;
 		}
 
+		/* Android 17 mounts cgroup2 with memory_recursiveprot, a
+		 * 5.0 feature this kernel does not implement.  Refusing the
+		 * option fails the whole mount, which breaks libprocessgroup
+		 * later on, so accept and ignore it.
+		 */
+		if (!strcmp(token, "memory_recursiveprot"))
+			continue;
+
 		pr_err("cgroup2: unknown option \"%s\"\n", token);
 		return -EINVAL;
 	}
