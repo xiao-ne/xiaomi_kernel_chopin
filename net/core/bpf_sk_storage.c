@@ -612,8 +612,13 @@ static int bpf_sk_storage_map_alloc_check(union bpf_attr *attr)
 	if (attr->map_flags != BPF_F_NO_PREALLOC || attr->max_entries ||
 	    attr->key_size != sizeof(int) || !attr->value_size ||
 	    /* Enforce BTF for userspace sk dumping */
-	    !attr->btf_key_type_id || !attr->btf_value_type_id)
+	    !attr->btf_key_type_id || !attr->btf_value_type_id) {
+		pr_info("bpf: sk_storage map rejected: flags=0x%x max=%u key=%u val=%u btf=%u/%u\n",
+			attr->map_flags, attr->max_entries, attr->key_size,
+			attr->value_size, attr->btf_key_type_id,
+			attr->btf_value_type_id);
 		return -EINVAL;
+	}
 
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
