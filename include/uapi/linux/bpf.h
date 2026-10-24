@@ -1196,10 +1196,21 @@ struct __sk_buff {
 	__u32 remote_port;	/* Stored in network byte order */
 	__u32 local_port;	/* stored in host byte order */
 
-	__bpf_md_ptr(struct bpf_flow_keys *, flow_keys);
 	/* ... here. */
+
 	__u32 data_meta;
+	__bpf_md_ptr(struct bpf_flow_keys *, flow_keys);
+	__u64 tstamp;
+	__u32 wire_len;
+	__u32 gso_segs;
 	__bpf_md_ptr(struct bpf_sock *, sk);
+	__u32 gso_size;
+	/* Android 17 (5.15+) 又加了这两个字段；4.14 没有对应实现，
+	 * 读出来恒为 0，但偏移必须与用户态头文件一致，否则程序加载时
+	 * 上下文访问会越界被拒。
+	 */
+	__u32 tstamp_type;
+	__u64 hwtstamp;
 };
 
 struct bpf_tunnel_key {

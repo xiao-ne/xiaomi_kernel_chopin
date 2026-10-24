@@ -4143,6 +4143,12 @@ static bool bpf_skb_is_valid_access(int off, int size, enum bpf_access_type type
 			return false;
 		info->reg_type = PTR_TO_SOCK_COMMON_OR_NULL;
 		break;
+	case offsetof(struct __sk_buff, tstamp):
+	case offsetof(struct __sk_buff, hwtstamp):
+		/* 64 位只读字段；4.14 里 hwtstamp 没有实现，转换后读 0 */
+		if (type == BPF_WRITE || size != sizeof(__u64))
+			return false;
+		break;
 	default:
 		/* Only narrow read access allowed for now. */
 		if (type == BPF_WRITE) {
@@ -4969,6 +4975,28 @@ static u32 bpf_convert_ctx_access(enum bpf_access_type type,
 		*insn++ = BPF_LDX_MEM(BPF_FIELD_SIZEOF(struct sk_buff, sk),
 				      si->dst_reg, si->src_reg,
 				      offsetof(struct sk_buff, sk));
+		break;
+	case offsetof(struct __sk_buff, tstamp):
+		*insn++ = BPF_LDX_MEM(BPF_DW, si->dst_reg, si->src_reg,
+				      bpf_target_off(struct sk_buff, tstamp, 8,
+						     target_size));
+		break;
+	case offsetof(struct __sk_buff, wire_len):
+		off  = si->off;
+		off -= offsetof(struct __sk_buff, wire_len);
+		off += offsetof(struct sk_buff, cb);
+		off += offsetof(struct qdisc_skb_cb, pkt_len);
+		*target_size = 4;
+		*insn++ = BPF_LDX_MEM(BPF_W, si->dst_reg, si->src_reg, off);
+		break;
+	case offsetof(struct __sk_buff, gso_segs):
+	case offsetof(struct __sk_buff, gso_size):
+	case offsetof(struct __sk_buff, tstamp_type):
+		/* 4.14 没有这些字段的可靠来源，先按 0 处理 */
+		*insn++ = BPF_MOV32_IMM(si->dst_reg, 0);
+		break;
+	case offsetof(struct __sk_buff, hwtstamp):
+		*insn++ = BPF_MOV64_IMM(si->dst_reg, 0);
 		break;
 	}
 
