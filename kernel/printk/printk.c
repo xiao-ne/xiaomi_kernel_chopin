@@ -1157,6 +1157,11 @@ static int devkmsg_open(struct inode *inode, struct file *file)
 
 	ratelimit_default_init(&user->rs);
 	ratelimit_set_flags(&user->rs, RATELIMIT_MSG_ON_RELEASE);
+	/* debug: Android 17's netbpfload writes enough to /dev/kmsg to trip
+	 * the 10-per-5s per-writer limit, and the dropped lines are the ones
+	 * that say why a BPF load failed.
+	 */
+	user->rs.interval = 0;
 
 	mutex_init(&user->lock);
 
