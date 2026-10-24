@@ -14,6 +14,7 @@
 #include <linux/vmalloc.h>
 #include <linux/wait.h>
 #include <linux/poll.h>
+#include <linux/hardirq.h>
 
 #define RINGBUF_CREATE_FLAG_MASK (BPF_F_NUMA_NODE)
 
@@ -236,6 +237,217 @@ static unsigned int ringbuf_map_poll(struct bpf_map *map, struct file *filp,
 		return POLLIN | POLLRDNORM;
 	return 0;
 }
+
+
+/* ---------- record helpers, ported from Linux 5.10 ---------- */
+
+#define BPF_RINGBUF_BUSY_BIT		(1U << 31)
+#define BPF_RINGBUF_DISCARD_BIT		(1U << 30)
+#define BPF_RINGBUF_HDR_SZ		8
+
+/* Offset from the ring buffer to the record header, in pages. Stored in
+ * the header so that struct bpf_ringbuf can be restored from the pointer
+ * handed to the program.
+ */
+static size_t bpf_ringbuf_rec_pg_off(struct bpf_ringbuf *rb,
+				     struct bpf_ringbuf_hdr *hdr)
+{
+	return ((void *)hdr - (void *)rb) >> PAGE_SHIFT;
+}
+
+static struct bpf_ringbuf *
+bpf_ringbuf_restore_from_rec(struct bpf_ringbuf_hdr *hdr)
+{
+	unsigned long addr = (unsigned long)(void *)hdr;
+	unsigned long off = (unsigned long)hdr->pg_off << PAGE_SHIFT;
+
+	return (void *)((addr & PAGE_MASK) - off);
+}
+
+static void *__bpf_ringbuf_reserve(struct bpf_ringbuf *rb, u64 size)
+{
+	unsigned long cons_pos, prod_pos, new_prod_pos, pend_pos, flags;
+	struct bpf_ringbuf_hdr *hdr;
+	u32 len, pg_off, tmp_size, hdr_len;
+
+	if (unlikely(size > RINGBUF_MAX_RECORD_SZ))
+		return NULL;
+
+	len = round_up(size + BPF_RINGBUF_HDR_SZ, 8);
+	if (len > rb->mask + 1)
+		return NULL;
+
+	cons_pos = smp_load_acquire(&rb->consumer_pos);
+
+	if (in_nmi()) {
+		if (!spin_trylock_irqsave(&rb->spinlock, flags))
+			return NULL;
+	} else {
+		spin_lock_irqsave(&rb->spinlock, flags);
+	}
+
+	pend_pos = rb->pending_pos;
+	prod_pos = rb->producer_pos;
+	new_prod_pos = prod_pos + len;
+
+	while (pend_pos < prod_pos) {
+		hdr = (void *)rb->data + (pend_pos & rb->mask);
+		hdr_len = READ_ONCE(hdr->len);
+		if (hdr_len & BPF_RINGBUF_BUSY_BIT)
+			break;
+		tmp_size = hdr_len & ~BPF_RINGBUF_DISCARD_BIT;
+		tmp_size = round_up(tmp_size + BPF_RINGBUF_HDR_SZ, 8);
+		pend_pos += tmp_size;
+	}
+	rb->pending_pos = pend_pos;
+
+	/* out of space if either the producer runs more than (size - 1)
+	 * ahead of the consumer, or the oldest uncommitted record does
+	 */
+	if (new_prod_pos - cons_pos > rb->mask ||
+	    new_prod_pos - pend_pos > rb->mask) {
+		spin_unlock_irqrestore(&rb->spinlock, flags);
+		return NULL;
+	}
+
+	hdr = (void *)rb->data + (prod_pos & rb->mask);
+	pg_off = bpf_ringbuf_rec_pg_off(rb, hdr);
+	hdr->len = size | BPF_RINGBUF_BUSY_BIT;
+	hdr->pg_off = pg_off;
+
+	/* pairs with consumer's smp_load_acquire() */
+	smp_store_release(&rb->producer_pos, new_prod_pos);
+
+	spin_unlock_irqrestore(&rb->spinlock, flags);
+
+	return (void *)hdr + BPF_RINGBUF_HDR_SZ;
+}
+
+BPF_CALL_3(bpf_ringbuf_reserve, struct bpf_map *, map, u64, size, u64, flags)
+{
+	struct bpf_ringbuf_map *rb_map;
+
+	if (unlikely(flags))
+		return 0;
+
+	rb_map = container_of(map, struct bpf_ringbuf_map, map);
+	return (unsigned long)__bpf_ringbuf_reserve(rb_map->rb, size);
+}
+
+const struct bpf_func_proto bpf_ringbuf_reserve_proto = {
+	.func		= bpf_ringbuf_reserve,
+	.ret_type	= RET_PTR_TO_ALLOC_MEM_OR_NULL,
+	.arg1_type	= ARG_CONST_MAP_PTR,
+	.arg2_type	= ARG_CONST_ALLOC_SIZE_OR_ZERO,
+	.arg3_type	= ARG_ANYTHING,
+};
+
+static void bpf_ringbuf_commit(void *sample, u64 flags, bool discard)
+{
+	unsigned long rec_pos, cons_pos;
+	struct bpf_ringbuf_hdr *hdr;
+	struct bpf_ringbuf *rb;
+	u32 new_len;
+
+	hdr = sample - BPF_RINGBUF_HDR_SZ;
+	rb = bpf_ringbuf_restore_from_rec(hdr);
+	new_len = hdr->len ^ BPF_RINGBUF_BUSY_BIT;
+	if (discard)
+		new_len |= BPF_RINGBUF_DISCARD_BIT;
+
+	/* update record header with correct final size prefix */
+	xchg(&hdr->len, new_len);
+
+	/* if consumer caught up and is waiting for our record, notify */
+	rec_pos = (void *)hdr - (void *)rb->data;
+	cons_pos = smp_load_acquire(&rb->consumer_pos) & rb->mask;
+
+	if (flags & BPF_RB_FORCE_WAKEUP)
+		irq_work_queue(&rb->work);
+	else if (cons_pos == rec_pos && !(flags & BPF_RB_NO_WAKEUP))
+		irq_work_queue(&rb->work);
+}
+
+BPF_CALL_2(bpf_ringbuf_submit, void *, sample, u64, flags)
+{
+	bpf_ringbuf_commit(sample, flags, false /* discard */);
+	return 0;
+}
+
+const struct bpf_func_proto bpf_ringbuf_submit_proto = {
+	.func		= bpf_ringbuf_submit,
+	.ret_type	= RET_VOID,
+	.arg1_type	= ARG_PTR_TO_ALLOC_MEM,
+	.arg2_type	= ARG_ANYTHING,
+};
+
+BPF_CALL_2(bpf_ringbuf_discard, void *, sample, u64, flags)
+{
+	bpf_ringbuf_commit(sample, flags, true /* discard */);
+	return 0;
+}
+
+const struct bpf_func_proto bpf_ringbuf_discard_proto = {
+	.func		= bpf_ringbuf_discard,
+	.ret_type	= RET_VOID,
+	.arg1_type	= ARG_PTR_TO_ALLOC_MEM,
+	.arg2_type	= ARG_ANYTHING,
+};
+
+BPF_CALL_4(bpf_ringbuf_output, struct bpf_map *, map, void *, data, u64, size,
+	   u64, flags)
+{
+	struct bpf_ringbuf_map *rb_map;
+	void *rec;
+
+	if (unlikely(flags & ~(BPF_RB_NO_WAKEUP | BPF_RB_FORCE_WAKEUP)))
+		return -EINVAL;
+
+	rb_map = container_of(map, struct bpf_ringbuf_map, map);
+	rec = __bpf_ringbuf_reserve(rb_map->rb, size);
+	if (!rec)
+		return -EAGAIN;
+
+	memcpy(rec, data, size);
+	bpf_ringbuf_commit(rec, flags, false /* discard */);
+	return 0;
+}
+
+const struct bpf_func_proto bpf_ringbuf_output_proto = {
+	.func		= bpf_ringbuf_output,
+	.ret_type	= RET_INTEGER,
+	.arg1_type	= ARG_CONST_MAP_PTR,
+	.arg2_type	= ARG_PTR_TO_MEM,
+	.arg3_type	= ARG_CONST_SIZE_OR_ZERO,
+	.arg4_type	= ARG_ANYTHING,
+};
+
+BPF_CALL_2(bpf_ringbuf_query, struct bpf_map *, map, u64, flags)
+{
+	struct bpf_ringbuf *rb;
+
+	rb = container_of(map, struct bpf_ringbuf_map, map)->rb;
+
+	switch (flags) {
+	case BPF_RB_AVAIL_DATA:
+		return ringbuf_avail_data_sz(rb);
+	case BPF_RB_RING_SIZE:
+		return rb->mask + 1;
+	case BPF_RB_CONS_POS:
+		return smp_load_acquire(&rb->consumer_pos);
+	case BPF_RB_PROD_POS:
+		return smp_load_acquire(&rb->producer_pos);
+	default:
+		return 0;
+	}
+}
+
+const struct bpf_func_proto bpf_ringbuf_query_proto = {
+	.func		= bpf_ringbuf_query,
+	.ret_type	= RET_INTEGER,
+	.arg1_type	= ARG_CONST_MAP_PTR,
+	.arg2_type	= ARG_ANYTHING,
+};
 
 const struct bpf_map_ops ringbuf_map_ops = {
 	.map_alloc = ringbuf_map_alloc,

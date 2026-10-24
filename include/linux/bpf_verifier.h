@@ -56,6 +56,8 @@ struct bpf_reg_state {
 	};
 	/* Fixed part of pointer offset, pointer types only */
 	s32 off;
+	/* For PTR_TO_MEM, the size of the memory region */
+	u32 mem_size;
 	/* For PTR_TO_PACKET, used to find other pointers with the same variable
 	 * offset, so they can share range knowledge.
 	 * For PTR_TO_MAP_VALUE_OR_NULL this is used to share which map value we

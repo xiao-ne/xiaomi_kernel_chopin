@@ -283,6 +283,19 @@ enum bpf_attach_type {
 #define BPF_F_RDONLY_PROG	(1U << 7)
 #define BPF_F_MMAPABLE		(1U << 10)
 
+/* Flags for ring buffer helpers */
+enum {
+	BPF_RB_NO_WAKEUP = 1,
+	BPF_RB_FORCE_WAKEUP = 2,
+};
+
+enum {
+	BPF_RB_AVAIL_DATA = 0,
+	BPF_RB_RING_SIZE = 1,
+	BPF_RB_CONS_POS = 2,
+	BPF_RB_PROD_POS = 3,
+};
+
 union bpf_attr {
 	struct { /* anonymous struct used by BPF_MAP_CREATE command */
 		__u32	map_type;	/* one of enum bpf_map_type */
