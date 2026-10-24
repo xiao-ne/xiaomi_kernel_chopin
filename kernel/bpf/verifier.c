@@ -1581,6 +1581,8 @@ static int check_flow_keys_access(struct bpf_verifier_env *env, int off,
 {
 	if (size < 0 || off < 0 ||
 	    (u64)off + size > sizeof(struct bpf_flow_keys)) {
+		pr_info("bpf: flow_keys access denied insn %u off=%d size=%d\n",
+			env->insn_idx, off, size);
 		return -EACCES;
 	}
 	return 0;
@@ -1596,6 +1598,8 @@ static int check_sock_access(struct bpf_verifier_env *env, int insn_idx,
 	bool valid;
 
 	if (reg->smin_value < 0) {
+		pr_info("bpf: sock access denied insn %u smin=%lld\n",
+			env->insn_idx, (long long)reg->smin_value);
 		return -EACCES;
 	}
 
