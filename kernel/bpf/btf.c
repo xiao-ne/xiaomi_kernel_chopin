@@ -308,6 +308,7 @@ static bool btf_type_is_modifier(const struct btf_type *t)
 	case BTF_KIND_VOLATILE:
 	case BTF_KIND_CONST:
 	case BTF_KIND_RESTRICT:
+	case BTF_KIND_TYPE_TAG:
 		return true;
 	}
 
@@ -403,6 +404,7 @@ static bool btf_type_has_size(const struct btf_type *t)
 	case BTF_KIND_STRUCT:
 	case BTF_KIND_UNION:
 	case BTF_KIND_ENUM:
+	case BTF_KIND_ENUM64:
 		return true;
 	}
 
@@ -2715,8 +2717,11 @@ static int btf_check_all_metas(struct btf_verifier_env *env)
 		s32 meta_size;
 
 		meta_size = btf_check_meta(env, t, end - cur);
-		if (meta_size < 0)
+		if (meta_size < 0) {
+			pr_info("btf: type %u (kind %u) rejected by check_meta: %d\n",
+				env->log_type_id, BTF_INFO_KIND(t->info), meta_size);
 			return meta_size;
+		}
 
 		btf_add_type(env, t);
 		cur += meta_size;
@@ -2811,14 +2816,20 @@ static int btf_check_all_types(struct btf_verifier_env *env)
 		if (btf_type_needs_resolve(t) &&
 		    !env_type_is_resolved(env, type_id)) {
 			err = btf_resolve(env, t, type_id);
-			if (err)
+			if (err) {
+				pr_info("btf: type %u (kind %u) failed to resolve: %d\n",
+					type_id, BTF_INFO_KIND(t->info), err);
 				return err;
+			}
 		}
 
 		if (btf_type_is_func_proto(t)) {
 			err = btf_func_proto_check(env, t);
-			if (err)
+			if (err) {
+				pr_info("btf: func_proto type %u rejected: %d\n",
+					type_id, err);
 				return err;
+			}
 		}
 
 		if (btf_type_is_func(t)) {
