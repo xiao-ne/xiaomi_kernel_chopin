@@ -127,6 +127,7 @@ enum bpf_map_type {
 	BPF_MAP_TYPE_PERCPU_CGROUP_STORAGE = 21,
 	BPF_MAP_TYPE_SK_STORAGE = 24,
 	BPF_MAP_TYPE_DEVMAP_HASH = 25,
+	BPF_MAP_TYPE_RINGBUF = 27,
 };
 
 enum bpf_prog_type {
