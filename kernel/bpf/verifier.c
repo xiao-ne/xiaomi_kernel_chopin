@@ -7192,6 +7192,10 @@ int bpf_check(struct bpf_prog **prog, union bpf_attr *attr,
 		goto skip_full_check;
 
 	ret = do_check(env);
+	if (ret) {
+		pr_info("bpf: verifier failed at insn %u (err %d), opcode 0x%02x\n",
+			env->insn_idx, ret, env->prog->insnsi[env->insn_idx].code);
+	}
 	if (env->cur_state) {
 		free_verifier_state(env->cur_state, true);
 		env->cur_state = NULL;
@@ -7306,6 +7310,10 @@ int bpf_analyzer(struct bpf_prog *prog, const struct bpf_ext_analyzer_ops *ops,
 	env->allow_ptr_leaks = capable(CAP_SYS_ADMIN);
 
 	ret = do_check(env);
+	if (ret) {
+		pr_info("bpf: verifier failed at insn %u (err %d), opcode 0x%02x\n",
+			env->insn_idx, ret, env->prog->insnsi[env->insn_idx].code);
+	}
 	if (env->cur_state) {
 		free_verifier_state(env->cur_state, true);
 		env->cur_state = NULL;
