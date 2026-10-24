@@ -261,6 +261,18 @@ __printf(2, 3) static void verbose(void *private_data, const char *fmt, ...)
 	va_start(args, fmt);
 	bpf_verifier_vlog(&env->log, fmt, args);
 	va_end(args);
+
+	/* debug：libbpf 给的日志缓冲区只有 64KB，这个程序的 verifier 日志
+	 * 会把它写满，最后那条错误说明就被截掉了。这里同步一份到内核日志。
+	 */
+	{
+		char dbgbuf[512];
+
+		va_start(args, fmt);
+		vsnprintf(dbgbuf, sizeof(dbgbuf), fmt, args);
+		va_end(args);
+		pr_info("bpfv: %s", dbgbuf);
+	}
 }
 
 static bool type_is_pkt_pointer(enum bpf_reg_type type)
