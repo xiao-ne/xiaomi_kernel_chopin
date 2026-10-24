@@ -1493,23 +1493,27 @@ static int bpf_prog_load(union bpf_attr *attr, union bpf_attr __user *uattr)
 		 * /proc/last_kmsg 直接看到。
 		 */
 		if (attr->log_level && attr->log_buf) {
-			char *tmp = kmalloc(32768, GFP_KERNEL);
+			u32 total = attr->log_size;
+			char *tmp;
+
+			if (total > (1 << 20))
+				total = 1 << 20;
+			tmp = vmalloc(total ? total : PAGE_SIZE);
 			if (tmp) {
 				if (copy_from_user(tmp, (char __user *)(unsigned long)attr->log_buf,
-						   32767) == 0) {
-					int len, s;
+						   total ? total : PAGE_SIZE) == 0) {
+					int len = strnlen(tmp, total ? total : PAGE_SIZE);
+					int s0;
 
-					tmp[32767] = '\0';
-					len = strnlen(tmp, 32767);
-					pr_info("bpf: prog load rejected (%d), verifier log %d bytes (buffer %u)\n",
-						err, len, attr->log_size);
+					pr_info("bpf: prog load rejected (%d), verifier log %d bytes\n",
+						err, len);
 					pr_info("bpfvlog head: %.900s\n", tmp);
 					if (len > 900) {
-						s = len > 4000 ? len - 4000 : 900;
-						pr_info("bpfvlog tail (from %d):\n%s\n", s, tmp + s);
+						s0 = len > 6000 ? len - 6000 : 900;
+						pr_info("bpfvlog tail (from %d):\n%s\n", s0, tmp + s0);
 					}
 				}
-				kfree(tmp);
+				vfree(tmp);
 			}
 		}
 		goto free_used_maps;
