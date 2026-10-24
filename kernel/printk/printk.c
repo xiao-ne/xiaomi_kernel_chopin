@@ -3356,7 +3356,10 @@ int printk_deferred(const char *fmt, ...)
  * This enforces a rate limit: not more than 10 kernel messages
  * every 5s to make a denial-of-service attack impossible.
  */
-DEFINE_RATELIMIT_STATE(printk_ratelimit_state, 5 * HZ, 10);
+/* debug: Android 17 的 bpf loader 会刷大量日志，默认限流会丢掉
+ * 关键错误行（"N output lines suppressed"）。调试期放开。
+ */
+DEFINE_RATELIMIT_STATE(printk_ratelimit_state, 5 * HZ, 100000);
 
 int __printk_ratelimit(const char *func)
 {
