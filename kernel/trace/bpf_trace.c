@@ -510,6 +510,15 @@ tracing_func_proto(enum bpf_func_id func_id, const struct bpf_prog *prog)
 		return &bpf_get_prandom_u32_proto;
 	case BPF_FUNC_probe_read_str:
 		return &bpf_probe_read_str_proto;
+	/* 5.5 把 probe_read 拆成 kernel/user 两个名字，语义相同。
+	 * Android 17 的程序用的是新名字（id 113/114）。
+	 */
+	case BPF_FUNC_probe_read_kernel:
+	case BPF_FUNC_probe_read_user:
+		return &bpf_probe_read_proto;
+	case BPF_FUNC_probe_read_kernel_str:
+	case BPF_FUNC_probe_read_user_str:
+		return &bpf_probe_read_str_proto;
 	case BPF_FUNC_get_current_cgroup_id:
 		return &bpf_get_current_cgroup_id_proto;
 	default:
