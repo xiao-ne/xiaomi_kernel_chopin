@@ -2005,9 +2005,13 @@ static int check_mem_access(struct bpf_verifier_env *env, int insn_idx, u32 regn
 			verbose(env, "R%d leaks addr into mem\n", value_regno);
 			return -EACCES;
 		}
-		if (off < 0 || off + size > reg->mem_size) {
-			verbose(env, "invalid access to mem: off=%d size=%d mem_size=%u\n",
-				off, size, reg->mem_size);
+		/* variable offset must also stay inside [0, mem_size] */
+		if (off < 0 || size <= 0 ||
+		    reg->smin_value < -off ||
+		    reg->umax_value > (s64)reg->mem_size - off - size) {
+			verbose(env, "invalid access to mem: off=%d size=%d mem_size=%u var=[%lld,%lld]\n",
+				off, size, reg->mem_size,
+				reg->smin_value, reg->umax_value);
 			return -EACCES;
 		}
 		if (t == BPF_READ && value_regno >= 0)
