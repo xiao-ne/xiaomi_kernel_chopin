@@ -26,11 +26,6 @@ struct seq_file;
 struct btf;
 struct btf_type;
 
-struct vm_area_struct;
-struct poll_table_struct;
-
-extern const struct bpf_func_proto bpf_ringbuf_output_proto;
-
 /* map is generic key/value storage optionally accesible by eBPF programs */
 struct bpf_map_ops {
 	/* funcs callable from userspace (via syscall) */
@@ -69,12 +64,6 @@ struct bpf_map_ops {
 				     u64 *imm, u32 off);
 	int (*map_direct_value_meta)(const struct bpf_map *map,
 				     u64 imm, u32 *off);
-	/* 4.14 backport: mmap()/poll() on a map fd, needed by
-	 * BPF_MAP_TYPE_RINGBUF.  Implemented in kernel/bpf/syscall.c.
-	 */
-	int (*map_mmap)(struct bpf_map *map, struct vm_area_struct *vma);
-	unsigned int (*map_poll)(struct bpf_map *map, struct file *filp,
-			 struct poll_table_struct *pts);
 };
 
 struct bpf_map {

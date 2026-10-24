@@ -390,40 +390,6 @@ static ssize_t bpf_dummy_write(struct file *filp, const char __user *buf,
 	return -EINVAL;
 }
 
-static int bpf_map_mmap(struct file *filp, struct vm_area_struct *vma)
-{
-	struct bpf_map *map = filp->private_data;
-	int err;
-
-	if (!map->ops->map_mmap)
-		return -ENOTSUPP;
-
-	if (!(vma->vm_flags & VM_SHARED))
-		return -EINVAL;
-
-	/* a program that only reads the map must not get a writable mapping */
-	if ((map->map_flags & BPF_F_RDONLY_PROG) && (vma->vm_flags & VM_WRITE))
-		return -EACCES;
-
-	/* remap_vmalloc_range() expects mmap_sem to be held for writing */
-	down_write(&current->mm->mmap_sem);
-	err = map->ops->map_mmap(map, vma);
-	up_write(&current->mm->mmap_sem);
-
-	return err;
-}
-
-static unsigned int bpf_map_poll(struct file *filp,
-				 struct poll_table_struct *pts)
-{
-	struct bpf_map *map = filp->private_data;
-
-	if (!map->ops->map_poll)
-		return 0;
-
-	return map->ops->map_poll(map, filp, pts);
-}
-
 const struct file_operations bpf_map_fops = {
 #ifdef CONFIG_PROC_FS
 	.show_fdinfo	= bpf_map_show_fdinfo,
@@ -431,8 +397,6 @@ const struct file_operations bpf_map_fops = {
 	.release	= bpf_map_release,
 	.read		= bpf_dummy_read,
 	.write		= bpf_dummy_write,
-	.mmap		= bpf_map_mmap,
-	.poll		= bpf_map_poll,
 };
 
 int bpf_map_new_fd(struct bpf_map *map, int flags)
@@ -2419,48 +2383,10 @@ static int bpf_btf_get_fd_by_id(const union bpf_attr *attr)
 	return btf_get_fd_by_id(attr->btf_id);
 }
 
-static int bpf_link_fake_release(struct inode *inode, struct file *file){
-	return 0;
-}
-
-static const struct file_operations bpf_link_fake_fops = {
-	.llseek = no_llseek,
-	.release = bpf_link_fake_release,
-};
-
-static int bpf_link_create(const union bpf_attr *attr)
-{
-	if (!capable(CAP_SYS_ADMIN))
-		return -EPERM;
-
-	/* Android 17 bpfloader/apexd bootstrap requires BPF_LINK_CREATE
-	 * to succeed; a dummy anon fd keeps the fd-based APIs working
-	 * without an actual link implementation on 4.14. */
-	return anon_inode_getfd("bpf_link", &bpf_link_fake_fops, NULL, O_CLOEXEC);
-}
-
-static int bpf_link_update(const union bpf_attr *attr)
-{
-	if (!capable(CAP_SYS_ADMIN))
-		return -EPERM;
-
-	return 0;
-}
-
-static int bpf_link_detach(const union bpf_attr *attr)
-{
-	if (!capable(CAP_SYS_ADMIN))
-		return -EPERM;
-
-	return 0;
-}
-
 SYSCALL_DEFINE3(bpf, int, cmd, union bpf_attr __user *, uattr, unsigned int, size)
 {
 	union bpf_attr attr;
 	int err;
-
-	pr_debug("bpf syscall: cmd=%d comm=%s\n", cmd, current->comm);
 
 	if (sysctl_unprivileged_bpf_disabled && !capable(CAP_SYS_ADMIN))
 		return -EPERM;
@@ -2544,19 +2470,8 @@ SYSCALL_DEFINE3(bpf, int, cmd, union bpf_attr __user *, uattr, unsigned int, siz
 	case BPF_BTF_GET_FD_BY_ID:
 		err = bpf_btf_get_fd_by_id(&attr);
 		break;
-	case BPF_LINK_CREATE:
-		err = bpf_link_create(&attr);
-		break;
-	case BPF_LINK_UPDATE:
-		err = bpf_link_update(&attr);
-		break;
-	case BPF_LINK_DETACH:
-		err = bpf_link_detach(&attr);
-		break;
 	default:
-		/* Modern libbpf treats EOPNOTSUPP as "not available" and falls
-		 * back, while EINVAL looks like a hard error. */
-		err = -EOPNOTSUPP;
+		err = -EINVAL;
 		break;
 	}
 
