@@ -4992,10 +4992,16 @@ static u32 bpf_convert_ctx_access(enum bpf_access_type type,
 	case offsetof(struct __sk_buff, gso_segs):
 	case offsetof(struct __sk_buff, gso_size):
 	case offsetof(struct __sk_buff, tstamp_type):
-		/* 4.14 没有这些字段的可靠来源，先按 0 处理 */
+		/* 4.14 没有这些字段的可靠来源，先按 0 处理。
+		 * target_size 必须回填：verifier 的 convert_ctx_accesses()
+		 * 看到 ctx_field_size 非零而 target_size 为 0 时会直接报
+		 * "bpf verifier is misconfigured"。
+		 */
+		*target_size = 4;
 		*insn++ = BPF_MOV32_IMM(si->dst_reg, 0);
 		break;
 	case offsetof(struct __sk_buff, hwtstamp):
+		*target_size = 8;
 		*insn++ = BPF_MOV64_IMM(si->dst_reg, 0);
 		break;
 	}
