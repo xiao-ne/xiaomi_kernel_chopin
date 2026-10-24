@@ -116,6 +116,22 @@ const struct bpf_func_proto bpf_ktime_get_ns_proto = {
 	.ret_type	= RET_INTEGER,
 };
 
+/* Android 17 的程序（tethering offload 等）会调用这个 helper。
+ * 之前内核里只有 core.c 的一个 __weak 声明，没有实现，proto 全是 0，
+ * verifier 于是报 "kernel subsystem misconfigured func bpf_ktime_get_boot_ns#125"。
+ */
+BPF_CALL_0(bpf_ktime_get_boot_ns)
+{
+	/* 4.14 没有 ktime_get_boottime_ns()，用 boottime 的 ktime_t 换算 */
+	return ktime_to_ns(ktime_get_boottime());
+}
+
+const struct bpf_func_proto bpf_ktime_get_boot_ns_proto = {
+	.func		= bpf_ktime_get_boot_ns,
+	.gpl_only	= false,
+	.ret_type	= RET_INTEGER,
+};
+
 BPF_CALL_0(bpf_get_current_pid_tgid)
 {
 	struct task_struct *task = current;
