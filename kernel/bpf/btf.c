@@ -2228,8 +2228,14 @@ static s32 btf_func_check_meta(struct btf_verifier_env *env,
 		return -EINVAL;
 	}
 
-	if (btf_type_vlen(t)) {
-		btf_verifier_log_type(env, t, "vlen != 0");
+	/* BTF_KIND_FUNC carries its linkage in the vlen field ever since
+	 * libbpf started emitting BTF_FUNC_STATIC/GLOBAL/EXTERN.  4.14 only
+	 * ever saw literal 0 here, so a plain "vlen != 0" test rejects every
+	 * modern BPF object - which is what Android 17's netbpfload hits
+	 * (type 126, kind 12) and turns into reboot_on_failure.
+	 */
+	if (btf_type_vlen(t) > BTF_FUNC_EXTERN) {
+		btf_verifier_log_type(env, t, "Invalid func linkage");
 		return -EINVAL;
 	}
 
