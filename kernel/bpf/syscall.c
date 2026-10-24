@@ -1487,8 +1487,25 @@ static int bpf_prog_load(union bpf_attr *attr, union bpf_attr __user *uattr)
 
 	/* run eBPF verifier */
 	err = bpf_check(&prog, attr, uattr);
-	if (err < 0)
+	if (err < 0) {
+		/* debug：Android 的 bpfloader 不转发 libbpf 的 verifier 日志，
+		 * 这里把日志缓冲区开头拷进内核日志，失败原因就能从
+		 * /proc/last_kmsg 直接看到。
+		 */
+		if (attr->log_level && attr->log_buf) {
+			char *tmp = kmalloc(2048, GFP_KERNEL);
+			if (tmp) {
+				if (copy_from_user(tmp, (char __user *)(unsigned long)attr->log_buf,
+						   2047) == 0) {
+					tmp[2047] = '\0';
+					pr_info("bpf: prog load rejected (%d), verifier log:\n%s\n",
+						err, tmp);
+				}
+				kfree(tmp);
+			}
+		}
 		goto free_used_maps;
+	}
 
 	prog = bpf_prog_select_runtime(prog, &err);
 	if (err < 0)
