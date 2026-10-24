@@ -405,10 +405,11 @@ static int bpf_map_mmap(struct file *filp, struct vm_area_struct *vma)
 	if ((map->map_flags & BPF_F_RDONLY_PROG) && (vma->vm_flags & VM_WRITE))
 		return -EACCES;
 
-	/* remap_vmalloc_range() expects mmap_sem to be held for writing */
-	down_write(&current->mm->mmap_sem);
+	/* VFS already holds mmap_sem for writing when it calls
+	 * ->mmap(), and down_write() on an already write-held rwsem
+	 * deadlocks: never take it again here.
+	 */
 	err = map->ops->map_mmap(map, vma);
-	up_write(&current->mm->mmap_sem);
 
 	return err;
 }
