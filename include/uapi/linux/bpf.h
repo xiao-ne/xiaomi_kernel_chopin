@@ -281,6 +281,7 @@ enum bpf_attach_type {
 
 /* Flags for accessing BPF object from program side. */
 #define BPF_F_RDONLY_PROG	(1U << 7)
+#define BPF_F_MMAPABLE		(1U << 10)
 
 union bpf_attr {
 	struct { /* anonymous struct used by BPF_MAP_CREATE command */

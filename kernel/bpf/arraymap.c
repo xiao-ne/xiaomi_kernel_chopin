@@ -14,6 +14,7 @@
 #include <linux/btf.h>
 #include <linux/err.h>
 #include <linux/slab.h>
+#include <linux/vmalloc.h>
 #include <linux/mm.h>
 #include <linux/filter.h>
 #include <linux/perf_event.h>
@@ -22,7 +23,7 @@
 #include "map_in_map.h"
 
 #define ARRAY_CREATE_FLAG_MASK \
-	(BPF_F_NUMA_NODE | BPF_F_RDONLY | BPF_F_WRONLY)
+	(BPF_F_NUMA_NODE | BPF_F_RDONLY | BPF_F_WRONLY | BPF_F_MMAPABLE)
 
 static void bpf_array_free_percpu(struct bpf_array *array)
 {
@@ -121,7 +122,14 @@ static struct bpf_map *array_map_alloc(union bpf_attr *attr)
 		return ERR_PTR(ret);
 
 	/* allocate all map elements and zero-initialize them */
-	array = bpf_map_area_alloc(array_size, numa_node);
+	if (attr->map_flags & BPF_F_MMAPABLE) {
+		/* mmap() 需要 vmalloc 支撑的内存，不能用 kmalloc */
+		array = __vmalloc_node_range(array_size, 1, VMALLOC_START, VMALLOC_END,
+					     GFP_KERNEL | __GFP_ZERO, PAGE_KERNEL, 0,
+					     numa_node, __builtin_return_address(0));
+	} else {
+		array = bpf_map_area_alloc(array_size, numa_node);
+	}
 	if (!array)
 		return ERR_PTR(-ENOMEM);
 	array->index_mask = index_mask;
@@ -413,9 +421,25 @@ static int array_map_check_btf(const struct bpf_map *map,
 	return 0;
 }
 
+static int array_map_mmap(struct bpf_map *map, struct vm_area_struct *vma)
+{
+	struct bpf_array *array = container_of(map, struct bpf_array, map);
+	pgoff_t pgoff = PAGE_ALIGN(sizeof(*array)) >> PAGE_SHIFT;
+
+	if (!(map->map_flags & BPF_F_MMAPABLE))
+		return -EINVAL;
+
+	if (vma->vm_pgoff * PAGE_SIZE + (vma->vm_end - vma->vm_start) >
+	    PAGE_ALIGN((u64)array->map.max_entries * array->elem_size))
+		return -EINVAL;
+
+	return remap_vmalloc_range(vma, (void *)array, vma->vm_pgoff + pgoff);
+}
+
 const struct bpf_map_ops array_map_ops = {
 	.map_alloc = array_map_alloc,
 	.map_free = array_map_free,
+	.map_mmap = array_map_mmap,
 	.map_get_next_key = array_map_get_next_key,
 	.map_lookup_elem = array_map_lookup_elem,
 	.map_update_elem = array_map_update_elem,
