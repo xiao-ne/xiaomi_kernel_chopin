@@ -24,7 +24,6 @@ void copy_map_value_locked(struct bpf_map *map, void *dst, void *src,
  * dev_map_hash_ops is now implemented in kernel/bpf/devmap.c (DEVMAP_HASH
  * support backported for Android 16 netbpfload).
  */
-const struct bpf_map_ops sk_storage_map_ops = {};
 
 int skb_flow_dissector_bpf_prog_attach(const union bpf_attr *attr,
 				       struct bpf_prog *prog)
