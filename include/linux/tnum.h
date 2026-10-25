@@ -25,6 +25,8 @@ struct tnum tnum_range(u64 min, u64 max);
 struct tnum tnum_lshift(struct tnum a, u8 shift);
 /* Shift a tnum right (by a fixed shift) */
 struct tnum tnum_rshift(struct tnum a, u8 shift);
+/* Arithmetic shift right (by a fixed shift), keeping the sign */
+struct tnum tnum_arshift(struct tnum a, u8 min_shift, u8 insn_bitness);
 /* Add two tnums, return @a + @b */
 struct tnum tnum_add(struct tnum a, struct tnum b);
 /* Subtract two tnums, return @a - @b */

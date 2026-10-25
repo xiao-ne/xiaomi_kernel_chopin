@@ -2223,6 +2223,65 @@ static int check_stack_boundary(struct bpf_verifier_env *env, int regno,
 	return update_stack_depth(env, state, off);
 }
 
+static int __check_mem_access(struct bpf_verifier_env *env, int regno,
+			      int off, int size, u32 mem_size,
+			      bool zero_size_allowed)
+{
+	bool size_ok = size > 0 || (size == 0 && zero_size_allowed);
+
+	if (off >= 0 && size_ok && (u64)off + size <= mem_size)
+		return 0;
+
+	verbose(env, "invalid access to memory, mem_size=%u off=%d size=%d\n",
+		mem_size, off, size);
+	return -EACCES;
+}
+
+static int check_mem_region_access(struct bpf_verifier_env *env, u32 regno,
+				   int off, int size, u32 mem_size,
+				   bool zero_size_allowed)
+{
+	struct bpf_reg_state *reg = &cur_regs(env)[regno];
+	int err;
+
+	/* We may have adjusted the register pointing to memory region, so we
+	 * need to try adding each of min_value and max_value to off
+	 * to make sure our theoretical access will be safe.
+	 */
+	if (reg->smin_value < 0 &&
+	    (reg->smin_value == S64_MIN ||
+	     (off + reg->smin_value != (s64)(s32)(off + reg->smin_value)) ||
+	      reg->smin_value + off < 0)) {
+		verbose(env, "R%d min value is negative, either use unsigned index or do a if (index >=0) check.\n",
+			regno);
+		return -EACCES;
+	}
+	err = __check_mem_access(env, regno, reg->smin_value + off, size,
+				 mem_size, zero_size_allowed);
+	if (err) {
+		verbose(env, "R%d min value is outside of the allowed memory range\n", regno);
+		return err;
+	}
+
+	/* If we haven't set a max value then we need to bail since we can't be
+	 * sure we won't do bad things.
+	 * If reg->umax_value + off could overflow, treat that as unbounded too.
+	 */
+	if (reg->umax_value >= BPF_MAX_VAR_OFF) {
+		verbose(env, "R%d unbounded memory access, make sure to bounds check any such access\n",
+			regno);
+		return -EACCES;
+	}
+	err = __check_mem_access(env, regno, reg->umax_value + off, size,
+				 mem_size, zero_size_allowed);
+	if (err) {
+		verbose(env, "R%d max value is outside of the allowed memory range\n", regno);
+		return err;
+	}
+
+	return 0;
+}
+
 static int check_helper_mem_access(struct bpf_verifier_env *env, int regno,
 				   int access_size, bool zero_size_allowed,
 				   struct bpf_call_arg_meta *meta)
@@ -2237,6 +2296,10 @@ static int check_helper_mem_access(struct bpf_verifier_env *env, int regno,
 		return check_flow_keys_access(env, reg->off, access_size);
 	case PTR_TO_MAP_VALUE:
 		return check_map_access(env, regno, reg->off, access_size);
+	case PTR_TO_MEM:
+		return check_mem_region_access(env, regno, reg->off,
+					       access_size, reg->mem_size,
+					       zero_size_allowed);
 	default: /* scalar_value|ptr_to_stack or invalid ptr */
 		return check_stack_boundary(env, regno, access_size,
 					    zero_size_allowed, meta);
@@ -3980,6 +4043,26 @@ static int adjust_scalar_min_max_vals(struct bpf_verifier_env *env,
 		dst_reg->umin_value >>= umax_val;
 		dst_reg->umax_value >>= umin_val;
 		/* We may learn something more from the var_off */
+		__update_reg_bounds(dst_reg);
+		break;
+	case BPF_ARSH:
+		if (umax_val >= insn_bitness) {
+			/* Shifts greater than 31 or 63 are undefined.
+			 * This includes shifts by a negative number.
+			 */
+			mark_reg_unknown(env, regs, insn->dst_reg);
+			break;
+		}
+		/* Only a constant shift amount reaches this point, so
+		 * umin_val == umax_val.
+		 */
+		dst_reg->smin_value >>= umin_val;
+		dst_reg->smax_value >>= umin_val;
+		dst_reg->var_off = tnum_arshift(dst_reg->var_off, umin_val,
+						insn_bitness);
+		/* blow away the unsigned bounds and let var_off refine them */
+		dst_reg->umin_value = 0;
+		dst_reg->umax_value = U64_MAX;
 		__update_reg_bounds(dst_reg);
 		break;
 	default:
