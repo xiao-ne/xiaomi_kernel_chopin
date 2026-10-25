@@ -1931,8 +1931,6 @@ SYSCALL_DEFINE5(getsockopt, int, fd, int, level, int, optname,
 			err = BPF_CGROUP_RUN_PROG_GETSOCKOPT(sock->sk, level,
 							     optname, optval, optlen,
 							     max_optlen, err);
-		pr_info("bpfdbg: getsockopt level=%d optname=%d max=%d err=%d\n",
-			level, optname, max_optlen, err);
 out_put:
 		fput_light(sock->file, fput_needed);
 	}

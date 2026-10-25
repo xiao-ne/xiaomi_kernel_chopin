@@ -84,6 +84,15 @@ build_kernel() {
         ok "pahole: $(pahole --version 2>&1 | head -1)"
     fi
 
+    # KernelSU-Next 版本号兜底：子模块缺少 .git 元数据（备份恢复/换机后常见）时，
+    # kernel/Kbuild 会把 KSU_VERSION 退化成 1，管理器会判定内核过旧而不放 root。
+    # 27c191da 的真实提交数是 2981，故 30000 + 2981 + 150 = 33131。
+    KSU_FALLBACK_ARGS=""
+    if [ ! -e drivers/kernelsu/.git ]; then
+        KSU_FALLBACK_ARGS="KSU_GIT_VERSION_VALID=1 KSU_GIT_VERSION=2981 KSU_GIT_TAG=v3.2.0"
+        echo "⚠️  drivers/kernelsu 缺少 .git 元数据，使用兜底 KSU 版本 33131"
+    fi
+
     # 编译并保存完整日志（后台），同时实时显示错误
     echo "开始编译..."
     echo "📝 完整日志: $full_log"
@@ -91,7 +100,7 @@ build_kernel() {
     echo "📝 详细分析: $detail_log"
     
     # 编译并保存所有输出
-    make O=out -j$(nproc) CC="ccache clang-$CLANG_VERSION" KCFLAGS="-w" Image 2>&1 | tee "$full_log"
+    make O=out -j$(nproc) CC="ccache clang-$CLANG_VERSION" KCFLAGS="-w" $KSU_FALLBACK_ARGS Image 2>&1 | tee "$full_log"
     
     # 检查编译结果
     if [ ${PIPESTATUS[0]} -ne 0 ]; then
