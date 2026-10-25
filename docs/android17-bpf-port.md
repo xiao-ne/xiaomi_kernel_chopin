@@ -158,6 +158,25 @@ EXT4-fs (sdc): Remounting filesystem read-only
 判据工具：`tools/verify_sources.py`（见下）。2026-10-25 当天它报出 **43 个**被跟踪
 文件内容成了随机字节，而 `git status` 一直是「干净」的。
 
+### 2026-10-25 20:00 重建验证
+
+VHDX 被清空后重装了 Ubuntu 24.04，从 `F:\刷机\备份\` 的 bundle + tgz 恢复仓库，补回
+`net: let cgroup/skb programs reach the socket lookup helpers`（`17b2bebef`）与文档提交
+（`f7c765249`），apt 装回同一套工具链（clang 14.0.6、pahole 1.25、gcc-arm64 13.3），
+`tools/verify_sources.py` 报 `不一致: 0 / 缺失: 0`（80,256 个条目）。
+
+全量重编结果与事故前一致：
+
+| 项 | 事故前（15:22） | 重建后（19:29） |
+| --- | --- | --- |
+| `Image` | 45,387,792 字节 | 45,387,792 字节 |
+| `.BTF` | 约 7.3 MB | 7,338,508 字节（magic 0xeb9f，类型段 4,291,812） |
+| 关键符号 | `tnum_arshift`/`bpf_ringbuf_*`/`bpf_sk_lookup_*` | 同上，全部在 `System.map` |
+
+重编包：`boot-A17-sklookup-rb-20261025_1938.img`（sha256
+`05e70e1ef76a2b9cd8f554bd97cd72113b741e3e182b030895fe4aec2f0ae3a3`），内核 sha256
+`f45e7a08…`，与 15:22 那版只有编译时间戳不同。
+
 这台机器（WSL2 + /home 在虚拟磁盘上）出现过**静默写入损坏**：文件内容变成随机字节，但
 大小和 mtime 不变，因此 `git status` 因为 stat 缓存显示「干净」，`make` 只会报
 `*** missing separator` 或 `source file is not valid UTF-8` 这类难以定位的错误。
