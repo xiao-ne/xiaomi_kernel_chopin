@@ -80,6 +80,14 @@
   把字段访问改写成 `struct sock` 偏移），所以新增
   `bpf_get_socket_cookie_sock_proto`（`.arg1_type = ARG_PTR_TO_CTX`）和
   `bpf_sk_storage_get_cg_sock_proto`（复用 `bpf_sk_storage_get`，`.arg2_type = ARG_PTR_TO_CTX`）。
+* `cgroup_skb` 的 socket lookup 三件套：`bpf_sk_lookup_tcp/udp`、`bpf_sk_release`
+  （辅助函数 84/85/86）在本树里实现和 proto 都有，但只有 `tc_cls_act_func_proto()`
+  列了它们；`cg_skb_func_proto()` -> `sk_filter_func_proto()` 那条链没有，于是
+  A17 的 `netd.o` 里 `egress/stats$5_10_26q2` 报 `unknown func bpf_sk_lookup_tcp#84`。
+  按 5.10 抽出 `bpf_sk_base_func_proto()`（`skb_load_bytes`、`skb_load_bytes_relative`、
+  `sk_lookup_tcp/udp`、`sk_release`、`get_socket_cookie`、`get_socket_uid`、
+  `perf_event_output`，兜底 `bpf_base_func_proto()`），让 `sk_filter_func_proto()`
+  直接返回它。本树没有 `bpf_capable()`，所以不带 5.10 那个能力位裁剪。
 * `bpf_sk_storage_get/delete` 的 `.arg2_type`：4.14 原来写 `ARG_PTR_TO_SOCKET`，verifier 只认
   `PTR_TO_SOCKET`；而 SCHED_CLS 里 `skb->sk` 给的是 `PTR_TO_SOCK_COMMON`，于是
   `R2 type=sock_common expected=sock` -> `-13 (EACCES)`。5.10 用的是
@@ -106,11 +114,12 @@
 | `boot-A17-ptrmem2-20261025_020337.img` | PTR_TO_MEM 变量偏移边界 | OK | netd.o 只剩 ARSH 错误 |
 | `boot-A17-arsh-20261025_100029.img` | ARSH + PTR_TO_MEM 作为帮助函数入参 | OK | netd.o 只剩 `sock_common` 错误 |
 | `boot-A17-cgsock-20261025_110332.img` | 上面全部 + cgroup/sock 的 46/107 | OK | 同上（-13 `R2 type=sock_common expected=sock`） |
-| `boot-A17-sockcommon-20261025_132146.img` | sk_storage 接受 sock_common + sk_fullsock 守卫 | 待测 | 待测 |
+| `boot-A17-sockcommon-20261025_132146.img` | sk_storage 接受 sock_common + sk_fullsock 守卫 | OK | inet 的 1256 条 `ingress/stats` 全过，只剩 `egress/stats` 的 `sk_lookup_tcp#84` |
+| `boot-A17-sklookup-20261025_152745.img` | cgroup_skb 补 `bpf_sk_base_func_proto()`（84/85/86） | 待测 | 待测 |
 
 ## 9. 测试方法
 
-1. 刷 `boot-A17-cgsock-*.img`，确认 Android 13 能正常开机（回归检查）；
+1. 刷最新的 `boot-A17-*.img`，确认 Android 13 能正常开机（回归检查）；
 2. 用 DSU 启动 Android 17；
 3. 失败会自动重启回 Android 13，然后取日志：
 
@@ -122,6 +131,32 @@ adb pull /sdcard/lastk.txt
 关注 `NetBpfLoad:` / `libbpf:` / `bpfv:` 开头的行。
 
 ## 10. 构建环境自检（重要）
+
+### 2026-10-25 磁盘事故与抢救（已实践）
+
+这台机器的 WSL 磁盘在 24 小时内坏了两次，第二次直接让根分区变只读：
+
+```
+EXT4-fs error (device sdc): ext4_lookup:1787: inode #416528: comm grep: iget: bad extra_isize 26433
+EXT4-fs (sdc): Remounting filesystem read-only
+```
+
+抢救顺序（全部验证过）：
+
+1. 先把仓库和历史导到 Windows 盘：`git bundle create <f>.bundle HEAD`
+   （`--all` 会因坏 ref 失败）、`tar czf <f>.tgz .`、关键小文件单独打包；
+2. `echo 1 > /proc/sys/kernel/sysrq; echo o > /proc/sysrq-trigger` 让 WSL 断电——
+   `wsl --shutdown/--terminate` 对已经卡在 I/O 上的 VM 无效，`vmmemWSL` 不会退；
+3. `wsl --mount --vhd "<vhdx>" --bare`，用**另一个发行版**（Debian）跑
+   `e2fsck -fy /dev/sdX`；`wsl --unmount all` 会因占用失败，先 terminate 占用者或
+   直接 `wsl --unmount "<vhdx 路径>"`；
+4. fsck 会顺手带走 `.git/HEAD` 和少量被跟踪文件的内容：
+   `printf 'ref: refs/heads/<branch>\n' > .git/HEAD` 重建 HEAD，
+   再从 bundle `git clone` 一份、`rsync -a .git/objects/` 合并对象，
+   最后 `git checkout -- <坏文件>`。
+
+判据工具：`tools/verify_sources.py`（见下）。2026-10-25 当天它报出 **43 个**被跟踪
+文件内容成了随机字节，而 `git status` 一直是「干净」的。
 
 这台机器（WSL2 + /home 在虚拟磁盘上）出现过**静默写入损坏**：文件内容变成随机字节，但
 大小和 mtime 不变，因此 `git status` 因为 stat 缓存显示「干净」，`make` 只会报
