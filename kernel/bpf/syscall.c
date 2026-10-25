@@ -1782,6 +1782,8 @@ static int bpf_prog_attach(const union bpf_attr *attr)
 		bpf_prog_put(prog);
 	cgroup_put(cgrp);
 
+	pr_info("bpfdbg: attach type=%u prog_type=%u ret=%d\n",
+		attr->attach_type, prog->type, ret);
 	return ret;
 }
 
