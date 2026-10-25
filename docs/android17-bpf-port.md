@@ -115,7 +115,9 @@
 | `boot-A17-arsh-20261025_100029.img` | ARSH + PTR_TO_MEM 作为帮助函数入参 | OK | netd.o 只剩 `sock_common` 错误 |
 | `boot-A17-cgsock-20261025_110332.img` | 上面全部 + cgroup/sock 的 46/107 | OK | 同上（-13 `R2 type=sock_common expected=sock`） |
 | `boot-A17-sockcommon-20261025_132146.img` | sk_storage 接受 sock_common + sk_fullsock 守卫 | OK | inet 的 1256 条 `ingress/stats` 全过，只剩 `egress/stats` 的 `sk_lookup_tcp#84` |
-| `boot-A17-sklookup-20261025_152745.img` | cgroup_skb 补 `bpf_sk_base_func_proto()`（84/85/86） | 待测 | 待测 |
+| `boot-A17-sklookup-20261025_152745.img` | cgroup_skb 补 `bpf_sk_base_func_proto()`（84/85/86） | OK | 全部 `ingress/stats` + `egress/stats` 通过，只剩 `cgroupsockrelease_inet_release` |
+| `boot-A17-sklookup-rb-20261025_1938.img` | 同上（VHDX 事故后从备份重编，产物同尺寸） | 未单独测 | 未单独测 |
+| `boot-A17-sockrelease-20261025_2356.img` | cgroup/sock release hook（attach type 34） | 待测 | 待测 |
 
 ## 9. 测试方法
 
@@ -198,3 +200,27 @@ python3 /mnt/c/Users/xiaone/AppData/Local/Temp/verify_sources.py
 
 **A17 的配置一定要在仓库里有对应文件**：`arch/arm64/configs/chopin_a17_defconfig`
 （提交 `0fca3bb09`）。删 `out/` 之前它只存在于 `out/.config` 里，差点丢掉。
+
+## 11. cgroup/sock release hook（attach type 34）
+
+A17 的 `netd.o` 里有一组 `cgroupsockrelease/inet_release$5_10_*` 程序。它不是新的
+**程序类型**，而是 `BPF_PROG_TYPE_CGROUP_SOCK`（=9）配一个新的**附着类型**
+`BPF_CGROUP_INET_SOCK_RELEASE`（=34，5.10 的值）。
+
+本树的 `enum bpf_attach_type` 停在 `BPF_CGROUP_SETSOCKOPT = 22`，于是
+`bpf_prog_load_check_attach_type()` 在 `bpf_prog_load()` 里直接返回 `-EINVAL`，
+**验证器根本没跑**，所以日志里既没有 verifier dump、也没有 `bpfv:` 行 —— 只有
+`BPF program load failed: Invalid argument`。这是「无日志 -22」的典型特征：
+先看是不是 prog/attach 类型没被认出来，而不是去猜指令。
+
+回移的内容（对照 `v5.10.230`）：
+
+| 文件 | 改动 |
+| --- | --- |
+| `include/uapi/linux/bpf.h` | 追加 `BPF_CGROUP_INET_SOCK_RELEASE = 34`（23..33 仍未实现，`__MAX_BPF_ATTACH_TYPE` 自动变 35） |
+| `kernel/bpf/syscall.c` | load 期校验、attach/detach 的 ptype 映射、`BPF_PROG_QUERY` 白名单各加一处 |
+| `include/linux/bpf-cgroup.h` | `BPF_CGROUP_RUN_PROG_INET_SOCK_RELEASE(sk)` 宏 + `CONFIG_CGROUP_BPF=n` 存根 |
+| `net/ipv4/af_inet.c` | `inet_release()` 里对非内核 socket 调用该宏（5.10 的 `!sk->sk_kern_sock` 条件） |
+
+运行侧不需要新代码：`__cgroup_bpf_run_filter_sk(sk, type)` 已经按
+`cgrp->bpf.effective[type]` 取程序数组，数组尺寸是 `MAX_BPF_ATTACH_TYPE`，加宽后自然覆盖 34。
