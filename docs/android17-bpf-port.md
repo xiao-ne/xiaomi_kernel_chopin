@@ -80,6 +80,13 @@
   把字段访问改写成 `struct sock` 偏移），所以新增
   `bpf_get_socket_cookie_sock_proto`（`.arg1_type = ARG_PTR_TO_CTX`）和
   `bpf_sk_storage_get_cg_sock_proto`（复用 `bpf_sk_storage_get`，`.arg2_type = ARG_PTR_TO_CTX`）。
+* `bpf_sk_storage_get/delete` 的 `.arg2_type`：4.14 原来写 `ARG_PTR_TO_SOCKET`，verifier 只认
+  `PTR_TO_SOCKET`；而 SCHED_CLS 里 `skb->sk` 给的是 `PTR_TO_SOCK_COMMON`，于是
+  `R2 type=sock_common expected=sock` -> `-13 (EACCES)`。5.10 用的是
+  `ARG_PTR_TO_BTF_ID_SOCK_COMMON`（集合 = SOCK_COMMON/SOCKET/TCP_SOCK/XDP_SOCK/BTF_ID），
+  4.14 的等价物是 `ARG_PTR_TO_SOCK_COMMON`（`type_is_sk_pointer()`）。
+  放宽后实现里必须补 `sk_fullsock()` 守卫（5.10 有、我们原来没有），否则非全量
+  `sock` 指针会按 `struct sock` 偏移读 `sk_bpf_storage`。
 
 ## 7. 调试手段（bring-up 期间临时保留）
 
@@ -97,8 +104,9 @@
 | `boot-A17-skstorage-20261025_003714.img` | 真 sk_storage | OK | 过 sk_storage map |
 | `boot-A17-ptrmem-20261025_015505.img` | PTR_TO_MEM + 五个 ringbuf 帮助函数 | OK | ringbuf_reserve 不再是 unknown func |
 | `boot-A17-ptrmem2-20261025_020337.img` | PTR_TO_MEM 变量偏移边界 | OK | netd.o 只剩 ARSH 错误 |
-| `boot-A17-arsh-20261025_100029.img` | ARSH + PTR_TO_MEM 作为帮助函数入参 | 待测 | 待测 |
-| `boot-A17-cgsock-20261025_110332.img` | 上面全部 + cgroup/sock 的 46/107 | 待测 | 待测 |
+| `boot-A17-arsh-20261025_100029.img` | ARSH + PTR_TO_MEM 作为帮助函数入参 | OK | netd.o 只剩 `sock_common` 错误 |
+| `boot-A17-cgsock-20261025_110332.img` | 上面全部 + cgroup/sock 的 46/107 | OK | 同上（-13 `R2 type=sock_common expected=sock`） |
+| `boot-A17-sockcommon-20261025_132146.img` | sk_storage 接受 sock_common + sk_fullsock 守卫 | 待测 | 待测 |
 
 ## 9. 测试方法
 
@@ -112,3 +120,27 @@ adb pull /sdcard/lastk.txt
 ```
 
 关注 `NetBpfLoad:` / `libbpf:` / `bpfv:` 开头的行。
+
+## 10. 构建环境自检（重要）
+
+这台机器（WSL2 + /home 在虚拟磁盘上）出现过**静默写入损坏**：文件内容变成随机字节，但
+大小和 mtime 不变，因此 `git status` 因为 stat 缓存显示「干净」，`make` 只会报
+`*** missing separator` 或 `source file is not valid UTF-8` 这类难以定位的错误。
+
+自检脚本（对每个被跟踪文件按 git blob 规则重算 sha1 与 index 比对）：
+
+```bash
+python3 /mnt/c/Users/xiaone/AppData/Local/Temp/verify_sources.py
+# 输出「不一致: N」即为损坏/未提交改动，需逐个恢复
+```
+
+踩过的坑：
+
+* `mode 120000` 的符号链接在 git 里存的是**链接目标字符串**，按普通文件恢复会把真文件
+  写成几十字节的文本（`arch/powerpc/lib/*.S`、`include/uapi/linux/input-event-codes.h` 都中过）；
+* `mode 160000` 是子模块 gitlink，不能当文件处理；
+* `arch/arm/boot/dts/mediatek` 在 index 里是普通文件、在工作区是目录，要跳过；
+* `out/` 一旦出现损坏 `.o`/`.cmd`，最省事的做法是删掉整个 `out/` 重建。
+
+**A17 的配置一定要在仓库里有对应文件**：`arch/arm64/configs/chopin_a17_defconfig`
+（提交 `0fca3bb09`）。删 `out/` 之前它只存在于 `out/.config` 里，差点丢掉。
