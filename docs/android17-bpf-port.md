@@ -224,3 +224,61 @@ A17 的 `netd.o` 里有一组 `cgroupsockrelease/inet_release$5_10_*` 程序。�
 
 运行侧不需要新代码：`__cgroup_bpf_run_filter_sk(sk, type)` 已经按
 `cgrp->bpf.effective[type]` 取程序数组，数组尺寸是 `MAX_BPF_ATTACH_TYPE`，加宽后自然覆盖 34。
+
+## 12. netd1shot 崩溃：cgroup sockopt 钩子从未被调用（2026-10-26）
+
+A17 的 `system/etc/init/netd.rc` 新增了一个 oneshot 服务：
+
+```
+service netd1shot /system/bin/netd oneshot
+    disabled # only started once bpf programs are loaded
+    oneshot
+    reboot_on_failure reboot,netd1shot-fail
+```
+
+`server/main.cpp` 里它只做一件事：
+
+```c
+if ((argc == 2) && !strcmp(argv[1], "oneshot")) {
+    setenv("NETD_ONESHOT", "1", 1);
+    return libnetd_updatable_init("/sys/fs/cgroup");
+}
+```
+
+而 `libnetd_updatable_init()`（Tethering APEX 的 `bpf/netd/NetdUpdatable.cpp`）在
+`BpfHandler::init()` 返回错误时会直接 `abort()`，所以 init 看到的是
+`received SIGABRT`，不是 `exited with status 1`：
+
+```c
+android::base::Result<void> ret = sBpfHandler.init(cg2_path);
+if (!ret.ok()) { LOG(ERROR) << ...; abort(); }
+```
+
+`BpfHandler::init()` 里有三步能 abort：
+
+1. `initPrograms()`：按内核版本 attach 一串 cgroup 程序，逐个
+   `queryProgram()` 复查（`<= 0` 就 abort）；
+2. `getsockoptTest()`：`getsockopt(sock, SOL_SOCKET, SO_ANDROID_DROP_REASON)`
+   必须成功且值为 `DROP_REASON_NONE`，否则 `abort()`；
+3. `mapLockTest()`：对 `map_netd_lock_*` 做 BPF_F_RDONLY/WRONLY 加锁测试。
+
+第 2 步是这次的根因：`SO_ANDROID_DROP_REASON` 只能由
+**BPF_CGROUP_GETSOCKOPT 程序**填充，而本仓库虽然从 5.10 搬来了
+`kernel/bpf/cgroup.c` 里的 `__cgroup_bpf_run_filter_getsockopt()` /
+`__cgroup_bpf_run_filter_setsockopt()` 和 `include/linux/bpf-cgroup.h` 的
+`BPF_CGROUP_RUN_PROG_{GET,SET}SOCKOPT` 宏，**`net/socket.c` 的
+getsockopt/setsockopt 却从来没调用过它们**——钩子形同不存在，返回
+`-ENOPROTOOPT`，自检立即 abort。
+
+修复（提交 `9e7bf63bc`）：按 5.10 的 `__sys_getsockopt()` /
+`__sys_setsockopt()` 接上调用点；4.14 的 `sock_setsockopt()` 只吃用户指针，
+BPF 程序替换后的 optval 是内核缓冲，该分支用 `set_fs(KERNEL_DS)` 包一层
+（本文件 `sock_sendmsg()` 附近本来就这么用）。
+
+同时加了两条临时调试打印，定位后删除：
+
+- `bpfdbg: attach type=%u prog_type=%u ret=%d`（`bpf_prog_attach()`）
+- `bpfdbg: getsockopt level=%d optname=%d max=%d err=%d`（`__sys_getsockopt`）
+
+交付包：`F:\刷机\boot\测试\boot-A17-sockopt-20261026_0147.img`
+（sha256 `8fffada1a14ec071bb276a356cd5e2c8efec84322b3b8bb3b74defdb61218689`）。
