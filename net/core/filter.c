@@ -3832,21 +3832,42 @@ sock_addr_func_proto(enum bpf_func_id func_id, const struct bpf_prog *prog)
 	}
 }
 
+/* Linux 5.10 has bpf_sk_base_func_proto() here: everything a socket or skb
+ * program may call, including the socket lookup trio. Android 17's
+ * cgroup_skb accounting programs (netd.o egress/stats) do
+ * sk_lookup_tcp -> sk_storage_get -> sk_release, and in 4.14 only the
+ * tc_cls_act dispatcher knew those three, so cgroup_skb loads failed with
+ * "unknown func bpf_sk_lookup_tcp#84".
+ */
 static const struct bpf_func_proto *
-sk_filter_func_proto(enum bpf_func_id func_id, const struct bpf_prog *prog)
+bpf_sk_base_func_proto(enum bpf_func_id func_id)
 {
 	switch (func_id) {
 	case BPF_FUNC_skb_load_bytes:
 		return &bpf_skb_load_bytes_proto;
 	case BPF_FUNC_skb_load_bytes_relative:
 		return &bpf_skb_load_bytes_relative_proto;
+	case BPF_FUNC_sk_lookup_tcp:
+		return &bpf_sk_lookup_tcp_proto;
+	case BPF_FUNC_sk_lookup_udp:
+		return &bpf_sk_lookup_udp_proto;
+	case BPF_FUNC_sk_release:
+		return &bpf_sk_release_proto;
 	case BPF_FUNC_get_socket_cookie:
 		return &bpf_get_socket_cookie_proto;
 	case BPF_FUNC_get_socket_uid:
 		return &bpf_get_socket_uid_proto;
+	case BPF_FUNC_perf_event_output:
+		return &bpf_skb_event_output_proto;
 	default:
 		return bpf_base_func_proto(func_id);
 	}
+}
+
+static const struct bpf_func_proto *
+sk_filter_func_proto(enum bpf_func_id func_id, const struct bpf_prog *prog)
+{
+	return bpf_sk_base_func_proto(func_id);
 }
 
 const struct bpf_func_proto bpf_sk_storage_get_proto __weak;
