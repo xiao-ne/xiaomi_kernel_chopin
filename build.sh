@@ -301,6 +301,117 @@ pack_img() {
     cd "$boot_dir" && rm -rf "$tmp"
 }
 
+# ==================== 内核体检（原 check_kernel.sh 的功能，已并进来） ====================
+check_kernel() {
+    cd "$KERNEL_DIR" || abort "内核目录不存在"
+    local img="out/arch/arm64/boot/Image"
+    local vml=out/vmlinux
+    local map=out/System.map
+
+    echo "================ 1. 版本与产物 ================"
+    grep -m2 -E '^(VERSION|PATCHLEVEL|SUBLEVEL|EXTRAVERSION)' Makefile
+    if [ -f "$img" ]; then
+        ok "Image: $(stat -c %s "$img") 字节  sha256=$(sha256sum "$img" | cut -c1-16)…"
+        strings "$img" | grep -m1 "Linux version"
+    else
+        echo "❌ 还没有 Image（先跑一次编译）"
+    fi
+    if [ -f "$vml" ]; then
+        local btf_hex=$(readelf -SW "$vml" 2>/dev/null | awk '$2 == ".BTF" {print $6}')
+        if [ -n "$btf_hex" ]; then
+            local btf_dec=$((16#$btf_hex))
+            ok ".BTF 段: $btf_dec 字节"
+        else
+            echo "❌ vmlinux 里没有 .BTF 段（CO-RE 会失败）"
+        fi
+    fi
+
+    echo
+    echo "================ 2. 关键符号（System.map） ================"
+    if [ -f "$map" ]; then
+        local syms="start_kernel kernel_init bpf_ringbuf_reserve bpf_ringbuf_submit bpf_ringbuf_discard bpf_ringbuf_output bpf_ringbuf_query bpf_sk_lookup_tcp bpf_sk_lookup_udp bpf_sk_release bpf_get_socket_cookie_sock bpf_sk_storage_get tnum_arshift __cgroup_bpf_run_filter_getsockopt __cgroup_bpf_run_filter_setsockopt ksu_handle_execveat ksu_handle_susfs_cmd"
+        local miss=0
+        for s in $syms; do
+            local line
+            line=$(grep -m1 -E " $s\$" "$map")
+            if [ -n "$line" ]; then
+                printf 'OK   %s\n' "$line"
+            else
+                printf 'MISS %s\n' "$s"
+                miss=$((miss+1))
+            fi
+        done
+        [ "$miss" -eq 0 ] && ok "关键符号齐全" || echo "⚠️  缺 $miss 个符号"
+        local nksu
+        nksu=$(grep -cE ' [tT] ksu_' "$map")
+        [ "$nksu" -gt 100 ] && ok "KernelSU 符号 $nksu 个" || echo "⚠️  KernelSU 符号只有 $nksu 个（KSU 可能没编进去）"
+    else
+        echo "❌ 没有 System.map"
+    fi
+
+    echo
+    echo "================ 3. 关键 CONFIG ================"
+    if [ -f out/.config ]; then
+        grep -E '^CONFIG_(LOCALVERSION|DEBUG_INFO_BTF|BPF_SYSCALL|PSI|BLK_CGROUP|CGROUP_DEVICE|CGROUP_PIDS|EROFS_FS|EROFS_FS_XATTR|KSU|MTK_RAM_CONSOLE|MTK_AEE_IPANIC|PANIC_ON_OOPS|PANIC_TIMEOUT|ARCH_MTK_PROJECT)=' out/.config
+        local ncfg
+        ncfg=$(grep -c '^CONFIG_' out/.config)
+        echo "配置项总数: $ncfg"
+    else
+        echo "❌ 没有 out/.config"
+    fi
+
+    echo
+    echo "================ 4. Android 17 移植要点是否在位 ================"
+    _grep_point() {
+        if grep -q "$2" "$1" 2>/dev/null; then printf 'OK   %s\n' "$3"; else printf 'MISS %s\n' "$3"; fi
+    }
+    _grep_point kernel/sys.c '5\.10\.209'            "uname 欺骗 -> 5.10.209"
+    _grep_point include/uapi/linux/bpf.h 'BPF_CGROUP_INET_SOCK_RELEASE' "attach type 34 (sock release)"
+    _grep_point net/core/filter.c 'bpf_sk_base_func_proto'              "cgroup_skb 的 sk_lookup 分派"
+    _grep_point kernel/bpf/verifier.c 'check_mem_region_access'          "PTR_TO_MEM 帮助函数入参"
+    _grep_point kernel/bpf/verifier.c 'case BPF_ARSH:'                   "ARSH 标量跟踪"
+    _grep_point net/socket.c 'BPF_CGROUP_RUN_PROG_GETSOCKOPT'            "sockopt 钩子调用点"
+    _grep_point net/core/bpf_sk_storage.c 'ARG_PTR_TO_SOCK_COMMON'       "sk_storage 接受 sock_common"
+
+    echo
+    echo "================ 5. 残留调试打印检查 ================"
+    if [ -f "$img" ]; then
+        local dbg
+        dbg=$(strings "$img" | grep -c 'bpfdbg')
+        [ "$dbg" -eq 0 ] && ok "无 bpfdbg 调试打印" || echo "⚠️  Image 里还有 $dbg 处 bpfdbg 打印"
+    fi
+
+    echo
+    echo "================ 6. 打包产物 ================"
+    ls -lht "$RELEASE_DIR"/*.img 2>/dev/null | head -5 || echo "（还没有 release 包）"
+
+    echo
+    echo "================ 7. 工具链 ================"
+    echo "clang-$CLANG_VERSION: $(clang-$CLANG_VERSION --version 2>/dev/null | head -1)"
+    echo "pahole: $(pahole --version 2>&1 | head -1)"
+    echo "ccache: $(ccache --version 2>/dev/null | head -1)"
+
+    echo
+    echo "================ 8. 仓库状态 ================"
+    git log -3 --oneline 2>/dev/null
+    local dirty
+    dirty=$(git status --porcelain 2>/dev/null | wc -l)
+    [ "$dirty" -eq 0 ] && ok "工作区干净" || echo "⚠️  有 $dirty 个未提交改动"
+
+    echo
+    echo "================ 9. 最近一次构建日志 ================"
+    local latest
+    latest=$(ls -t "$KERNEL_DIR"/full_*.log 2>/dev/null | head -1)
+    if [ -n "$latest" ]; then
+        echo "文件: $latest"
+        tail -12 "$latest"
+    else
+        echo "（无构建日志）"
+    fi
+    echo
+    ok "体检结束"
+}
+
 # ==================== 一次性依赖安装 ====================
 SETUP_FLAG="$HOME/.chopin_kernel_setup_done"
 
@@ -379,12 +490,27 @@ echo ""
 echo "  Xiaomi chopin 内核编译"
 echo ""
 
-read -p "版本名 (默认 $KERNEL_VERSION): " v
-[ -n "$v" ] && KERNEL_VERSION="$v"
+# 命令行模式：./build.sh all|compile|pack|check|cleanlog|error
+MODE=""
+case "${1:-}" in
+    all|compile|pack|check|cleanlog|error) MODE="$1" ;;
+    "") ;;
+    *) echo "用法: ./build.sh [all|compile|pack|check|cleanlog|error]"; exit 1 ;;
+esac
 
-echo ""
-echo "1) 编译+打包  2) 仅编译  3) 仅打包  4) 清理旧日志  5) 查看最近错误"
-read -p "选择: " c
+if [ -z "$MODE" ]; then
+    read -p "版本名 (默认 $KERNEL_VERSION): " v
+    [ -n "$v" ] && KERNEL_VERSION="$v"
+
+    echo ""
+    echo "1) 编译+打包  2) 仅编译  3) 仅打包  4) 清理旧日志  5) 查看最近错误  6) 内核体检"
+    read -p "选择: " c
+else
+    echo "模式: $MODE"
+    case $MODE in
+        all) c=1 ;; compile) c=2 ;; pack) c=3 ;; cleanlog) c=4 ;; error) c=5 ;; check) c=6 ;;
+    esac
+fi
 
 case $c in
     1) build_kernel && pack_img ;;
@@ -392,6 +518,7 @@ case $c in
     3) pack_img ;;
     4) clean_logs ;;
     5) show_error ;;
+    6) check_kernel ;;
     *) echo "无效选择" ;;
 esac
 

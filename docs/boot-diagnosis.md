@@ -104,7 +104,8 @@ grep -E 'mt_gpt_init|__initcall_mt_gpt_init6|mtk_stmr_init' out/System.map
 | EROFS fstab | **未注入**（日志：跳过 EROFS fstab 注入） |
 | 定时器符号 | `mt_gpt_init` / `mtk_stmr_init` 正常 |
 
-辅助脚本：`diag_build.sh`（不 mrproper，缺包装头时自动补 `asm-generic`）。  
+续编/打包：`./build.sh compile`（仅编译，不重新 mrproper）+ `./build.sh pack`（仅打包）；
+缺 `asm-generic` 包装头时 `build.sh` 会自动补。体检：`./build.sh check`。  
 注意：`build.sh` 全量路径若遇 `asm/types.h` 找不到，先执行：
 
 ```bash
