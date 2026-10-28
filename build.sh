@@ -11,7 +11,8 @@ if [ -x "$HOME/local-tools/root/usr/bin/pahole" ]; then
 fi
 
 KERNEL_DIR="$HOME/xiaomi_kernel_chopin"
-DEFCONFIG="chopin_defconfig"
+# A17 用的完整配置（chopin_defconfig 缺 28+ 个 MTK 驱动项，会卡在早期 init）
+DEFCONFIG="chopin_a17_defconfig"
 RELEASE_DIR="$KERNEL_DIR/release"
 
 # Ubuntu 系统交叉编译工具链
@@ -261,7 +262,27 @@ pack_img() {
     cd "$boot_dir" || abort "boot目录不存在"
     rm -rf "$tmp" && mkdir "$tmp" && cd "$tmp"
 
-    ../magiskboot unpack ../boot.img || abort "解包失败"
+    # ========== 底包选择与校验 ==========
+    # 绝不能把内核塞进原厂 A13 的 user ramdisk：那种 ramdisk 缺 androidboot.selinux=enforcing、
+    # first_stage fstab 只有 ext4+AVB，内核配它会第一屏就死并回落 fastboot。
+    local base_img="${BASE_IMG:-$boot_dir/boot.img}"
+    _base_ok() { [ -f "$1" ] && strings -a -n 8 "$1" | grep -q 'androidboot.selinux=enforcing'; }
+    if ! _base_ok "$base_img"; then
+        if [ -n "${BASE_IMG:-}" ]; then
+            abort "BASE_IMG=$base_img 不是可开机底包（缺 androidboot.selinux=enforcing），拒绝打包"
+        fi
+        warn "boot/boot.img 不是可开机底包（疑似原厂 user 镜像），自动改用已验证底包"
+        local cand
+        for cand in "$boot_dir/boot.img.good" \
+                    "$RELEASE_DIR/boot-Clang13-ksu-20261026_0240.img" \
+                    $(ls -t "$RELEASE_DIR"/boot-*.img 2>/dev/null); do
+            if _base_ok "$cand"; then base_img="$cand"; break; fi
+        done
+        _base_ok "$base_img" || abort "找不到可开机底包：把 eng ramdisk 镜像放回 boot/boot.img，或 export BASE_IMG=/path/to/img"
+        ok "底包: $base_img"
+    fi
+
+    ../magiskboot unpack "$base_img" || abort "解包失败"
     [ -f "$img_dir/Image.gz" ] && cp "$img_dir/Image.gz" kernel || cp "$img_dir/Image" kernel
     [ -f "$img_dir/dtb" ] && cp "$img_dir/dtb" .
     [ -f "$img_dir/dtbo.img" ] && cp "$img_dir/dtbo.img" .
@@ -296,8 +317,10 @@ pack_img() {
     fi
 
     local out="$RELEASE_DIR/boot-${KERNEL_VERSION}-${ts}.img"
-    ../magiskboot repack ../boot.img "$out" || abort "打包失败"
+    ../magiskboot repack "$base_img" "$out" || abort "打包失败"
     ok "boot.img: $out"
+    echo "   kernel sha256: $(sha256sum kernel | cut -d' ' -f1)"
+    echo "   底包: $(basename "$base_img")"
     cd "$boot_dir" && rm -rf "$tmp"
 }
 
