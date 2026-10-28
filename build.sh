@@ -89,10 +89,23 @@ build_kernel() {
     # KernelSU-Next 版本号兜底：子模块缺少 .git 元数据（备份恢复/换机后常见）时，
     # kernel/Kbuild 会把 KSU_VERSION 退化成 1，管理器会判定内核过旧而不放 root。
     # 27c191da 的真实提交数是 2981，故 30000 + 2981 + 150 = 33131。
+    # 判据必须是「真的能取到子模块自己的提交数」，只看 .git 是否存在会漏掉
+    # gitlink 悬空（.git 是个指向已丢失的 .git/modules/... 的文本文件）、
+    # dubious ownership 等情形 —— 那时 git 会向上回退到内核仓库，
+    # Kbuild 探测失败后把 KSU_VERSION 退化成 1。
     KSU_FALLBACK_ARGS=""
-    if [ ! -e drivers/kernelsu/.git ]; then
+    _ksu_root=$( cd drivers/kernelsu 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null )
+    _kern_root=$( git rev-parse --show-toplevel 2>/dev/null )
+    if [ -n "$_ksu_root" ] && [ "$_ksu_root" != "$_kern_root" ]; then
+        _ksu_count=$( git -C "$_ksu_root" rev-list --count HEAD 2>/dev/null )
+    else
+        _ksu_count=""
+    fi
+    if [ -z "${_ksu_count:-}" ] || [ "${_ksu_count:-0}" = "0" ]; then
         KSU_FALLBACK_ARGS="KSU_GIT_VERSION_VALID=1 KSU_GIT_VERSION=2981 KSU_GIT_TAG=v3.2.0"
-        echo "⚠️  drivers/kernelsu 缺少 .git 元数据，使用兜底 KSU 版本 33131"
+        echo "⚠️  drivers/kernelsu 取不到 git 提交数（.git 缺失/损坏/gitlink 悬空），兜底 KSU 版本 33131"
+    else
+        ok "KernelSU-Next 版本来源: git（${_ksu_count} 个提交）"
     fi
 
     # 编译并保存完整日志（后台），同时实时显示错误
