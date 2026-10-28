@@ -253,23 +253,42 @@ pack_img() {
     echo "🔍 kernel 版本: ${_kver:-未知}"
 
     # ========== EROFS fstab 检测与修复 ==========
-    # 打包时检查 ramdisk 的 fstab，缺 erofs 条目就补上(add_erofs_to_fstab 幂等,已有则跳过)
+    # 检查 ramdisk 的 fstab，缺 erofs 条目就补上（add_erofs_to_fstab 幂等）。
+    # 关键约束：只有 fstab 真的被改过才重压 ramdisk，重压时必须
+    #   1) 保持原包的条目顺序（用原 cpio 的名字列表驱动 cpio -o，不要 find）
+    #   2) 强制 root:root 属主（-R 0:0）
+    # 否则 2854 个条目的 uid/gid 会被写成 1000、顺序变成 readdir 顺序，
+    # Android 首阶段 init 起不来 → 卡第一屏无限重启。
     echo "🔍 检查 ramdisk fstab 是否包含 erofs..."
     if [ -f ramdisk.cpio ]; then
-        local rd_tmp="_rd_fix$$"
-        mkdir -p "$rd_tmp" && cd "$rd_tmp"
-        cpio -idm < ../ramdisk.cpio 2>/dev/null
+        local rd_ref="_rd_ref$$"
+        local rd_new="_rd_new$$"
+        rm -rf "$rd_ref" "$rd_new"
+        mkdir -p "$rd_ref" "$rd_new"
+        ( cd "$rd_ref" && cpio -idm --quiet 'first_stage_ramdisk/fstab.*' < ../ramdisk.cpio 2>/dev/null )
+        ( cd "$rd_new" && cpio -idm --quiet < ../ramdisk.cpio 2>/dev/null )
 
-        # 修复 first_stage_ramdisk 中的 fstab
-        for fstab in first_stage_ramdisk/fstab.*; do
+        for fstab in "$rd_new"/first_stage_ramdisk/fstab.*; do
             [ -f "$fstab" ] && add_erofs_to_fstab "$fstab"
         done
 
-        # 重新打包 ramdisk
-        find . | cpio -H newc -o 2>/dev/null > ../ramdisk.cpio
-        cd ..
-        rm -rf "$rd_tmp"
-        echo "✅ ramdisk 已更新"
+        local _changed=0
+        local _f _b
+        for _f in "$rd_new"/first_stage_ramdisk/fstab.*; do
+            [ -f "$_f" ] || continue
+            _b="$rd_ref/first_stage_ramdisk/$(basename "$_f")"
+            if [ -f "$_b" ]; then cmp -s "$_f" "$_b" || _changed=1; else _changed=1; fi
+        done
+
+        if [ "$_changed" -eq 0 ]; then
+            echo "ℹ️  ramdisk 的 fstab 无需修改，保持原样（不重压，避免破坏属主/顺序）"
+        else
+            ( cd "$rd_new" && cpio -it --quiet < ../ramdisk.cpio 2>/dev/null \
+                | cpio -H newc -o -R 0:0 --quiet > ../ramdisk.cpio.new ) \
+                && mv -f ramdisk.cpio.new ramdisk.cpio
+            echo "✅ ramdisk 已更新（保持原顺序 + root:root 属主）"
+        fi
+        rm -rf "$rd_ref" "$rd_new"
     fi
 
     local out="$RELEASE_DIR/boot-${KERNEL_VERSION}-${ts}.img"
