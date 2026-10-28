@@ -70,6 +70,25 @@ build_kernel() {
         echo "  缺失源文件配置已禁用"
     fi
 
+    # KernelSU-Next 版本号兜底：子模块 .git 丢失/损坏（备份恢复、换机、
+    # gitlink 悬空）时 kernel/Kbuild 会把 KSU_VERSION 退化成 1，
+    # 管理器会判定内核过旧而不给 root。27c191da 的真实提交数是 2981，
+    # 故 30000 + 2981 + 150 = 33131。
+    KSU_FALLBACK_ARGS=""
+    _ksu_root=$( cd drivers/kernelsu 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null )
+    _kern_root=$( git rev-parse --show-toplevel 2>/dev/null )
+    if [ -n "$_ksu_root" ] && [ "$_ksu_root" != "$_kern_root" ]; then
+        _ksu_count=$( git -C "$_ksu_root" rev-list --count HEAD 2>/dev/null )
+    else
+        _ksu_count=""
+    fi
+    if [ -z "${_ksu_count:-}" ] || [ "${_ksu_count:-0}" = "0" ]; then
+        KSU_FALLBACK_ARGS="KSU_GIT_VERSION_VALID=1 KSU_GIT_VERSION=2981 KSU_GIT_TAG=v3.2.0"
+        echo "⚠️  drivers/kernelsu 取不到 git 提交数（.git 缺失/损坏/gitlink 悬空），兜底 KSU 版本 33131"
+    else
+        ok "KernelSU-Next 版本来源: git（${_ksu_count} 个提交）"
+    fi
+
     # 编译并保存完整日志（后台），同时实时显示错误
     echo "开始编译..."
     echo "📝 完整日志: $full_log"
@@ -77,7 +96,7 @@ build_kernel() {
     echo "📝 详细分析: $detail_log"
     
     # 编译并保存所有输出
-    make O=out -j$(nproc) CC="ccache clang-$CLANG_VERSION" KCFLAGS="-w" Image 2>&1 | tee "$full_log"
+    make O=out -j$(nproc) CC="ccache clang-$CLANG_VERSION" KCFLAGS="-w" $KSU_FALLBACK_ARGS Image 2>&1 | tee "$full_log"
     
     # 检查编译结果
     if [ ${PIPESTATUS[0]} -ne 0 ]; then
