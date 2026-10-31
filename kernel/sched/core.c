@@ -1561,7 +1561,7 @@ retry:
 		/* Refcounting is expected to be always 0 for free groups */
 		if (unlikely(uc_cpu->group[clamp_id][group_id].tasks)) {
 #ifdef CONFIG_SCHED_DEBUG
-			WARN_ONCE(1, "invalid CPU[%d] clamp group [%u:%u] refcount: [%u] free_group_id: [%u] uc_map_new.se_count: [%lu]\n",
+			printk_deferred_once("invalid CPU[%d] clamp group [%u:%u] refcount: [%u] free_group_id: [%u] uc_map_new.se_count: [%lu]\n",
 			     cpu, clamp_id, group_id,
 			     uc_cpu->group[clamp_id][group_id].tasks,
 				free_group_id,
