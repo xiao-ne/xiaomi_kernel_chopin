@@ -21,6 +21,7 @@ struct bpf_verifier_env;
 struct perf_event;
 struct bpf_prog;
 struct bpf_map;
+struct poll_table_struct;
 struct sock;
 struct seq_file;
 struct btf;

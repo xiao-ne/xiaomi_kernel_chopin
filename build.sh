@@ -10,7 +10,7 @@ if [ -x "$HOME/local-tools/root/usr/bin/pahole" ]; then
     export PATH="$HOME/local-tools/root/usr/bin:$PATH"
 fi
 
-KERNEL_DIR="$HOME/xiaomi_kernel_chopin"
+KERNEL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 # A17 用的完整配置（chopin_defconfig 缺 28+ 个 MTK 驱动项，会卡在早期 init）
 DEFCONFIG="chopin_a17_defconfig"
 RELEASE_DIR="$KERNEL_DIR/release"
@@ -88,22 +88,26 @@ build_kernel() {
 
     # KernelSU-Next 版本号兜底：子模块缺少 .git 元数据（备份恢复/换机后常见）时，
     # kernel/Kbuild 会把 KSU_VERSION 退化成 1，管理器会判定内核过旧而不放 root。
-    # 27c191da 的真实提交数是 2981，故 30000 + 2981 + 150 = 33131。
-    # 判据必须是「真的能取到子模块自己的提交数」，只看 .git 是否存在会漏掉
-    # gitlink 悬空（.git 是个指向已丢失的 .git/modules/... 的文本文件）、
-    # dubious ownership 等情形 —— 那时 git 会向上回退到内核仓库，
-    # Kbuild 探测失败后把 KSU_VERSION 退化成 1。
+    # SUSFS 移植分支 (susfs-port, v3.4.0-legacy+1) 的真实提交数是 3016，
+    # 新 Kbuild 带 +289 offset：30000 + 3016 + 289 = 33305。
+    # 判据必须是「真的能取到子模块自己的完整提交历史」：.git 缺失、gitlink 悬空
+    # （.git 指向已丢失的 .git/modules/...）、dubious ownership，以及 --depth 1
+    # 的 shallow 克隆（rev-list --count 只有 1）都会让 Kbuild 把版本算错。
+    KSU_FALLBACK_COUNT=3016
+    KSU_FALLBACK_TAG=v3.4.0-legacy
     KSU_FALLBACK_ARGS=""
     _ksu_root=$( cd drivers/kernelsu 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null )
     _kern_root=$( git rev-parse --show-toplevel 2>/dev/null )
     if [ -n "$_ksu_root" ] && [ "$_ksu_root" != "$_kern_root" ]; then
         _ksu_count=$( git -C "$_ksu_root" rev-list --count HEAD 2>/dev/null )
+        _ksu_shallow=$( git -C "$_ksu_root" rev-parse --is-shallow-repository 2>/dev/null )
     else
         _ksu_count=""
+        _ksu_shallow=""
     fi
-    if [ -z "${_ksu_count:-}" ] || [ "${_ksu_count:-0}" = "0" ]; then
-        KSU_FALLBACK_ARGS="KSU_GIT_VERSION_VALID=1 KSU_GIT_VERSION=2981 KSU_GIT_TAG=v3.2.0"
-        echo "⚠️  drivers/kernelsu 取不到 git 提交数（.git 缺失/损坏/gitlink 悬空），兜底 KSU 版本 33131"
+    if [ -z "${_ksu_count:-}" ] || [ "${_ksu_count:-0}" -le 1 ] || [ "${_ksu_shallow:-}" = "true" ]; then
+        KSU_FALLBACK_ARGS="KSU_GIT_VERSION_VALID=1 KSU_GIT_VERSION=$KSU_FALLBACK_COUNT KSU_GIT_TAG=$KSU_FALLBACK_TAG"
+        echo "⚠️  drivers/kernelsu 取不到完整 git 历史（.git 缺失/损坏/shallow），兜底 KSU 版本 $((30000 + KSU_FALLBACK_COUNT + 289))"
     else
         ok "KernelSU-Next 版本来源: git（${_ksu_count} 个提交）"
     fi
