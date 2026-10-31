@@ -88,12 +88,12 @@ build_kernel() {
 
     # KernelSU-Next 版本号兜底：子模块缺少 .git 元数据（备份恢复/换机后常见）时，
     # kernel/Kbuild 会把 KSU_VERSION 退化成 1，管理器会判定内核过旧而不放 root。
-    # SUSFS 移植分支 (origin/legacy, v3.4.0-legacy) 的真实提交数是 3015，
-    # 新 Kbuild 带 +289 offset：30000 + 3015 + 289 = 33304。
+    # SUSFS 移植分支 (susfs-port, v3.4.0-legacy+1) 的真实提交数是 3016，
+    # 新 Kbuild 带 +289 offset：30000 + 3016 + 289 = 33305。
     # 判据必须是「真的能取到子模块自己的完整提交历史」：.git 缺失、gitlink 悬空
     # （.git 指向已丢失的 .git/modules/...）、dubious ownership，以及 --depth 1
     # 的 shallow 克隆（rev-list --count 只有 1）都会让 Kbuild 把版本算错。
-    KSU_FALLBACK_COUNT=3015
+    KSU_FALLBACK_COUNT=3016
     KSU_FALLBACK_TAG=v3.4.0-legacy
     KSU_FALLBACK_ARGS=""
     _ksu_root=$( cd drivers/kernelsu 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null )
