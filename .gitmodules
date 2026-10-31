@@ -1,4 +1,4 @@
 [submodule "drivers/kernelsu"]
 	path = drivers/kernelsu
-	url = https://github.com/xiao-ne/KernelSU-Next.git
-	branch = su-path-fix
+	url = https://github.com/xsd999333sensei/KernelSU-Next.git
+	branch = susfs-port
