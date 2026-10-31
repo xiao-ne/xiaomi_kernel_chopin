@@ -275,7 +275,6 @@ pack_img() {
     local img_dir="$KERNEL_DIR/out/arch/arm64/boot"
     local boot_dir="$KERNEL_DIR/boot"
     local tmp="$boot_dir/tmp_$$"
-    local ts=$(date +%Y%m%d_%H%M%S)
 
     cd "$boot_dir" || abort "boot目录不存在"
     rm -rf "$tmp" && mkdir "$tmp" && cd "$tmp"
@@ -357,8 +356,9 @@ pack_img() {
         rm -rf "$rd_ref" "$rd_new"
     fi
 
-    local out="$RELEASE_DIR/boot-${KERNEL_VERSION}-${ts}.img"
+    local out="$RELEASE_DIR/boot-${KERNEL_VERSION}.img"
     ../magiskboot repack "$base_img" "$out" || abort "打包失败"
+    find "$RELEASE_DIR" -maxdepth 1 -name 'boot-*.img' ! -name "$(basename "$out")" -delete 2>/dev/null || true
     ok "boot.img: $out"
     echo "   kernel sha256: $(sha256sum kernel | cut -d' ' -f1)"
     echo "   底包: $(basename "$base_img")"
