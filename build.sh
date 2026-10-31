@@ -285,7 +285,9 @@ pack_img() {
     # first_stage fstab 只有 ext4+AVB，内核配它会第一屏就死并回落 fastboot。
     local base_img="${BASE_IMG:-$boot_dir/boot.img}"
     _base_ok() { [ -f "$1" ] && strings -a -n 8 "$1" | grep -q 'androidboot.selinux=enforcing'; }
-    if ! _base_ok "$base_img"; then
+    if [ "${FORCE_BASE_IMG:-0}" = "1" ]; then
+        warn "FORCE_BASE_IMG=1：跳过底包安全检查（仅对已验证底包使用）"
+    elif ! _base_ok "$base_img"; then
         if [ -n "${BASE_IMG:-}" ]; then
             abort "BASE_IMG=$base_img 不是可开机底包（缺 androidboot.selinux=enforcing），拒绝打包"
         fi
@@ -322,7 +324,9 @@ pack_img() {
     # 否则会出现「第一屏无限重启」：以普通用户身份 cpio -o 会把 2854 个条目的
     # uid/gid 全写成 1000，Android 首阶段 init 直接起不来。
     echo "🔍 检查 ramdisk fstab 是否包含 erofs..."
-    if [ -f ramdisk.cpio ]; then
+    if [ "${SKIP_FSTAB_FIX:-0}" = "1" ]; then
+        echo "⏭️  SKIP_FSTAB_FIX=1：跳过 fstab 修改（保留原厂 ramdisk）"
+    elif [ -f ramdisk.cpio ]; then
         local rd_ref="_rd_ref$$"
         local rd_new="_rd_new$$"
         rm -rf "$rd_ref" "$rd_new"
