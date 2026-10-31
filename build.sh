@@ -10,7 +10,7 @@ if [ -x "$HOME/local-tools/root/usr/bin/pahole" ]; then
     export PATH="$HOME/local-tools/root/usr/bin:$PATH"
 fi
 
-KERNEL_DIR="$HOME/xiaomi_kernel_chopin"
+KERNEL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 # A17 用的完整配置（chopin_defconfig 缺 28+ 个 MTK 驱动项，会卡在早期 init）
 DEFCONFIG="chopin_a17_defconfig"
 RELEASE_DIR="$KERNEL_DIR/release"
