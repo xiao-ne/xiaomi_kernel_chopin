@@ -3847,12 +3847,6 @@ bpf_sk_base_func_proto(enum bpf_func_id func_id)
 		return &bpf_skb_load_bytes_proto;
 	case BPF_FUNC_skb_load_bytes_relative:
 		return &bpf_skb_load_bytes_relative_proto;
-	case BPF_FUNC_sk_lookup_tcp:
-		return &bpf_sk_lookup_tcp_proto;
-	case BPF_FUNC_sk_lookup_udp:
-		return &bpf_sk_lookup_udp_proto;
-	case BPF_FUNC_sk_release:
-		return &bpf_sk_release_proto;
 	case BPF_FUNC_get_socket_cookie:
 		return &bpf_get_socket_cookie_proto;
 	case BPF_FUNC_get_socket_uid:
@@ -3889,6 +3883,19 @@ cg_skb_func_proto(enum bpf_func_id func_id, const struct bpf_prog *prog)
 #ifdef CONFIG_INET
 	case BPF_FUNC_tcp_sock:
 		return &bpf_tcp_sock_proto;
+#endif
+#ifdef CONFIG_INET
+	/*
+	 * 只给 cgroup_skb 开：A17 的 netd.o egress/stats 需要 lookup/release。
+	 * 不再放在 bpf_sk_base_func_proto 里，免得普通 socket filter 也能用
+	 * （SOCKET_FILTER 在 4.14 加载时不校验 CAP_SYS_ADMIN）。
+	 */
+	case BPF_FUNC_sk_lookup_tcp:
+		return &bpf_sk_lookup_tcp_proto;
+	case BPF_FUNC_sk_lookup_udp:
+		return &bpf_sk_lookup_udp_proto;
+	case BPF_FUNC_sk_release:
+		return &bpf_sk_release_proto;
 #endif
 	default:
 		return sk_filter_func_proto(func_id, prog);
@@ -3996,6 +4003,18 @@ xdp_func_proto(enum bpf_func_id func_id, const struct bpf_prog *prog)
 		return &bpf_xdp_redirect_proto;
 	case BPF_FUNC_redirect_map:
 		return &bpf_xdp_redirect_map_proto;
+#ifdef CONFIG_INET
+	/*
+	 * XDP 版 sk_lookup 的 ctx 是 struct xdp_buff，只能给 XDP 用。
+	 * 之前这三条误挂在 lwt_xmit_func_proto 里（ctx 是 sk_buff）。
+	 */
+	case BPF_FUNC_sk_lookup_udp:
+		return &bpf_xdp_sk_lookup_udp_proto;
+	case BPF_FUNC_sk_lookup_tcp:
+		return &bpf_xdp_sk_lookup_tcp_proto;
+	case BPF_FUNC_sk_release:
+		return &bpf_sk_release_proto;
+#endif
 	default:
 		return bpf_base_func_proto(func_id);
 	}
@@ -4144,14 +4163,6 @@ lwt_xmit_func_proto(enum bpf_func_id func_id, const struct bpf_prog *prog)
 		return &bpf_l4_csum_replace_proto;
 	case BPF_FUNC_set_hash_invalid:
 		return &bpf_set_hash_invalid_proto;
-#ifdef CONFIG_INET
-	case BPF_FUNC_sk_lookup_udp:
-		return &bpf_xdp_sk_lookup_udp_proto;
-	case BPF_FUNC_sk_lookup_tcp:
-		return &bpf_xdp_sk_lookup_tcp_proto;
-	case BPF_FUNC_sk_release:
-		return &bpf_sk_release_proto;
-#endif
 	default:
 		return lwt_inout_func_proto(func_id, prog);
 	}

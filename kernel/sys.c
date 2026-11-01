@@ -1203,38 +1203,73 @@ static int override_release(char __user *release, size_t len)
 static char fake_uts_release[64] = "4.19.280";
 static bool cmdline_override;
 static int cached_android_sdk = -1;
+static bool android_sdk_probed;
 
+/*
+ * 读 /system/build.prop 逐块找 ro.build.version.sdk。
+ * 1) 不再只看前 2KB —— 属性行可能在后半段；
+ * 2) 解析结果校验范围，避免缓冲区边界把 37 截成 3；
+ * 3) 失败也缓存，否则任意进程 prctl 改名成 netd 就能反复触发内核 filp_open。
+ */
 static int detect_android_sdk(void)
 {
 	struct file *f;
-	char buf[2048];
 	loff_t pos = 0;
 	ssize_t n;
-	char *p;
-	int sdk;
+	char buf[512];
+	int sdk = -1;
 
-	if (cached_android_sdk >= 0)
+	if (android_sdk_probed)
 		return cached_android_sdk;
 
 	f = filp_open("/system/build.prop", O_RDONLY, 0);
 	if (IS_ERR(f))
-		return -1;
+		goto out;
 
-	n = kernel_read(f, buf, sizeof(buf) - 1, &pos);
-	filp_close(f, NULL);
-	if (n <= 0)
-		return -1;
-	buf[n] = '\0';
+	while ((n = kernel_read(f, buf, sizeof(buf) - 1, &pos)) > 0) {
+		char *p;
+		int val;
 
-	sdk = -1;
-	p = strstr(buf, "ro.build.version.sdk=");
-	if (p) {
+		buf[n] = '\0';
+		p = strstr(buf, "ro.build.version.sdk=");
+		if (!p)
+			continue;
 		p += strlen("ro.build.version.sdk=");
-		sdk = simple_strtol(p, NULL, 10);
+		val = simple_strtol(p, NULL, 10);
+		if (val > 0 && val < 100)
+			sdk = val;
+		break;
 	}
+	filp_close(f, NULL);
 
+out:
 	cached_android_sdk = sdk;
+	android_sdk_probed = true;
 	return sdk;
+}
+
+/*
+ * 需要伪装 release 时返回目标版本串，否则 NULL。
+ * newuname 与 old uname 共用，保证两条路径看到同样的 ABI。
+ */
+static const char *fake_release_for(struct task_struct *t)
+{
+	int sdk;
+
+	if (strncmp(t->comm, "bpfloader", 9) &&
+	    strncmp(t->comm, "netbpfload", 10) &&
+	    strncmp(t->comm, "netd", 4))
+		return NULL;
+
+	if (cmdline_override)
+		return fake_uts_release;
+
+	sdk = detect_android_sdk();
+	if (sdk >= 37)
+		return "5.10.209";
+	if (sdk >= 36)
+		return "5.4.186";
+	return "4.19.280";
 }
 
 static int __init fake_uname_setup(char *str)
@@ -1271,22 +1306,14 @@ SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)
 	 * Android 16 (API 36) needs 5.4.x, older releases 4.19.x.
 	 * An explicit cmdline override (fake_uname_release=...) always wins.
 	 */
-	if (!strncmp(current->comm, "bpfloader", 9) ||
-	    !strncmp(current->comm, "netbpfload", 10) ||
-	    !strncmp(current->comm, "netd", 4)) {
-		if (cmdline_override) {
-			strcpy(tmp.release, fake_uts_release);
-		} else {
-			int sdk = detect_android_sdk();
+	{
+		const char *fake = fake_release_for(current);
 
-			if (sdk >= 37)
-				strcpy(tmp.release, "5.10.209");
-			else if (sdk >= 36)
-				strcpy(tmp.release, "5.4.186");
-			else
-				strcpy(tmp.release, "4.19.280");
+		if (fake) {
+			strncpy(tmp.release, fake, sizeof(tmp.release) - 1);
+			tmp.release[sizeof(tmp.release) - 1] = '\0';
+			pr_debug("fake uname: %s release=%s\n", current->comm, tmp.release);
 		}
-		pr_debug("fake uname: %s release=%s\n", current->comm, tmp.release);
 	}
 
 	if (copy_to_user(name, &tmp, sizeof(tmp)))
@@ -1313,6 +1340,12 @@ SYSCALL_DEFINE1(uname, struct old_utsname __user *, name)
 	down_read(&uts_sem);
 	memcpy(&tmp, utsname(), sizeof(tmp));
 	up_read(&uts_sem);
+
+	/* 与 newuname 保持一致：老的 uname 视图也要伪装，否则 ABI 不一致 */
+	if (fake_release_for(current))
+		strncpy(tmp.release, fake_release_for(current),
+			sizeof(tmp.release) - 1);
+
 	if (copy_to_user(name, &tmp, sizeof(tmp)))
 		return -EFAULT;
 
