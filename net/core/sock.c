@@ -1689,6 +1689,11 @@ struct sock *sk_clone_lock(const struct sock *sk, const gfp_t priority)
 
 		sock_copy(newsk, sk);
 
+#ifdef CONFIG_BPF_SYSCALL
+	/* 子 socket 不能继承 listener 的 sk_storage 指针，否则 delete 会把 listener 的存储摘链 */
+	RCU_INIT_POINTER(newsk->sk_bpf_storage, NULL);
+#endif
+
 		newsk->sk_prot_creator = sk->sk_prot;
 
 		/* SANITY */

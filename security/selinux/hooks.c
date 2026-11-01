@@ -2448,15 +2448,24 @@ static int check_nnp_nosuid(const struct linux_binprm *bprm,
 		return 0; /* No change in credentials */
 
 	#ifdef CONFIG_KSU
+	    /*
+	     * KSU 的 su 需要从 init 域 exec 进 su 域。这里收窄成：
+	     * init 域 + 目标是名为 su 的可执行文件 + sid 已解析成功，
+	     * 不再无条件跳过 nnp/nosuid 与 bounded transition 检查。
+	     */
 	    if (!ksu_sid)
-        security_secctx_to_secid("u:r:su:s0", strlen("u:r:su:s0"), &ksu_sid);
+	        security_secctx_to_secid("u:r:su:s0", strlen("u:r:su:s0"), &ksu_sid);
 
-	    error = security_secid_to_secctx(old_tsec->sid, &secdata, &seclen);
-	    if (!error) {
-	        rc = strcmp("u:r:init:s0", secdata);
-	        security_release_secctx(secdata, seclen);
-	        if (rc == 0 && new_tsec->sid == ksu_sid)
-	            return 0;
+	    if (ksu_sid) {
+	        error = security_secid_to_secctx(old_tsec->sid, &secdata, &seclen);
+	        if (!error) {
+	            rc = strcmp("u:r:init:s0", secdata);
+	            security_release_secctx(secdata, seclen);
+	            if (rc == 0 && new_tsec->sid == ksu_sid &&
+	                bprm->file && bprm->file->f_path.dentry &&
+	                !strcmp(bprm->file->f_path.dentry->d_name.name, "su"))
+	                return 0;
+	        }
 	    }
 	#endif
 
