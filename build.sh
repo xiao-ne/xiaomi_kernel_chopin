@@ -387,15 +387,18 @@ pack_img() {
     ../magiskboot repack "$base_img" "$out" || abort "打包失败"
     [ -s "$out" ] || abort "打包产物不存在或为空: $out"
     echo "   包内 kernel sha256: $(sha256sum kernel | cut -d' ' -f1)"
-    # 只保留最近 3 个包：绝不动本次输出和当前底包（底包可能就在 release 里），
-    # 而且删除发生在产物校验之后。
-    local _keep=3 _idx=0 _old
+    # 只保留最新一个包：除本次输出外全部删除。
+    # 例外：当前底包如果本身就在 release 里，留着它 —— 删掉会让下次打包没有兜底底包。
+    local _old
     while IFS= read -r _old; do
         [ -z "$_old" ] && continue
         [ "$(basename "$_old")" = "$(basename "$out")" ] && continue
-        [ "$(basename "$_old")" = "$(basename "$base_img")" ] && continue
-        _idx=$((_idx + 1))
-        [ "$_idx" -ge "$_keep" ] && rm -f "$_old"
+        if [ "$(dirname "$_old")" = "$RELEASE_DIR" ] && \
+           [ "$(basename "$_old")" = "$(basename "$base_img")" ]; then
+            warn "保留当前底包: $(basename "$_old")"
+            continue
+        fi
+        rm -f "$_old" && echo "   删除旧包: $(basename "$_old")"
     done < <(ls -t "$RELEASE_DIR"/boot-*.img 2>/dev/null)
     ok "boot.img: $out"
     echo "   kernel sha256: $(sha256sum kernel | cut -d' ' -f1)"
