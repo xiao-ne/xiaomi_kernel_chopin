@@ -154,3 +154,4 @@ out/
 *.new
 /ramdisk.cpio
 /dtb/
+build_fix_*.log
