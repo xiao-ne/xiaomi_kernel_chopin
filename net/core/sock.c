@@ -137,6 +137,10 @@
 #include <linux/filter.h>
 #include <net/sock_reuseport.h>
 
+#ifdef CONFIG_BPF_SYSCALL
+#include <net/bpf_sk_storage.h>
+#endif
+
 #include <trace/events/sock.h>
 
 #include <net/tcp.h>
@@ -1584,6 +1588,14 @@ static void __sk_destruct(struct rcu_head *head)
 	}
 
 	sock_disable_timestamp(sk, SK_FLAGS_TIMESTAMP);
+
+#ifdef CONFIG_BPF_SYSCALL
+	/*
+	 * 必须在 sk_prot_free() 之前摘掉 sk_storage：
+	 * 否则 selem 仍指向已回收的 sock，删 map 时会写已释放内存。
+	 */
+	bpf_sk_storage_free(sk);
+#endif
 
 	if (atomic_read(&sk->sk_omem_alloc))
 		pr_debug("%s: optmem leakage (%d bytes) detected\n",

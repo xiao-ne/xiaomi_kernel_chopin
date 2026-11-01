@@ -1534,13 +1534,16 @@ retry:
 			break;
 	}
 	if (group_id >= UCLAMP_GROUPS) {
-#ifdef CONFIG_SCHED_DEBUG
 #define UCLAMP_MAPERR "clamp value [%u] mapping to clamp group failed\n"
+		/*
+		 * 表满时必须无条件退出：group_id == UCLAMP_GROUPS 会越界写
+		 * uc_maps[UCLAMP_GROUPS]。原来这段检查只在 CONFIG_SCHED_DEBUG
+		 * 下生效，关掉 debug 就是静默内存破坏。
+		 */
 		if (unlikely(free_group_id == UCLAMP_GROUPS)) {
 			pr_err_ratelimited(UCLAMP_MAPERR, clamp_value);
 			return;
 		}
-#endif
 		group_id = free_group_id;
 		uc_map_old.data = atomic_long_read(&uc_maps[group_id].adata);
 	}

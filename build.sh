@@ -280,10 +280,29 @@ pack_img() {
     rm -rf "$tmp" && mkdir "$tmp" && cd "$tmp"
 
     # ========== 底包选择与校验 ==========
-    # 绝不能把内核塞进原厂 A13 的 user ramdisk：那种 ramdisk 缺 androidboot.selinux=enforcing、
-    # first_stage fstab 只有 ext4+AVB，内核配它会第一屏就死并回落 fastboot。
+    # 绝不能把内核塞进原厂 A13 的 user ramdisk：那种 ramdisk 的 first_stage fstab 只有
+    # ext4+AVB，内核配它会第一屏就死并回落 fastboot。
+    # 判据必须是解包后的 ramdisk 内容：MTK 的 androidboot.* 由 bootloader 传入，
+    # 镜像里根本没有这些字符串（旧的 strings 判据对任何包都返回假）。
     local base_img="${BASE_IMG:-$boot_dir/boot.img}"
-    _base_ok() { [ -f "$1" ] && strings -a -n 8 "$1" | grep -q 'androidboot.selinux=enforcing'; }
+    _base_ok() {
+        local _img="$1" _work _rc=0
+        [ -f "$_img" ] || return 1
+        _work=$(mktemp -d) || return 1
+        ( cd "$_work" && "$boot_dir/magiskboot" unpack "$_img" >/dev/null 2>&1 ) \
+            || { rm -rf "$_work"; return 1; }
+        if [ -f "$_work/ramdisk.cpio" ]; then
+            # 原厂 user ramdisk 标记：ro.build.type=user / ro.debuggable=0
+            if zcat -f "$_work/ramdisk.cpio" 2>/dev/null | strings -a \
+                 | grep -qE 'ro\.build\.type=user|ro\.debuggable=0'; then
+                _rc=1
+            fi
+        else
+            _rc=1
+        fi
+        rm -rf "$_work"
+        return $_rc
+    }
     if [ "${FORCE_BASE_IMG:-0}" = "1" ]; then
         warn "FORCE_BASE_IMG=1：跳过底包安全检查（仅对已验证底包使用）"
     elif ! _base_ok "$base_img"; then
@@ -302,7 +321,12 @@ pack_img() {
     fi
 
     ../magiskboot unpack "$base_img" || abort "解包失败"
-    [ -f "$img_dir/Image.gz" ] && cp "$img_dir/Image.gz" kernel || cp "$img_dir/Image" kernel
+    if [ -f "$img_dir/Image.gz" ] && [ "$img_dir/Image.gz" -nt "$img_dir/Image" ]; then
+        cp "$img_dir/Image.gz" kernel || abort "拷贝 Image.gz 失败"
+    else
+        [ -f "$img_dir/Image" ] || abort "out/ 里没有 Image：先编译再打包（不要拿底包内核重新打包）"
+        cp "$img_dir/Image" kernel || abort "拷贝 Image 失败"
+    fi
     [ -f "$img_dir/dtb" ] && cp "$img_dir/dtb" .
     [ -f "$img_dir/dtbo.img" ] && cp "$img_dir/dtbo.img" .
 
@@ -348,17 +372,31 @@ pack_img() {
         if [ "$_changed" -eq 0 ]; then
             echo "ℹ️  ramdisk 的 fstab 无需修改，保持原样（不重压，避免破坏属主/顺序）"
         else
-            ( cd "$rd_new" && cpio -it --quiet < ../ramdisk.cpio 2>/dev/null \
+            if ( cd "$rd_new" && cpio -it --quiet < ../ramdisk.cpio 2>/dev/null \
                 | cpio -H newc -o -R 0:0 --quiet > ../ramdisk.cpio.new ) \
-                && mv -f ramdisk.cpio.new ramdisk.cpio
-            ok "ramdisk 已更新（保持原顺序 + root:root 属主）"
+                && mv -f ramdisk.cpio.new ramdisk.cpio; then
+                ok "ramdisk 已更新（保持原顺序 + root:root 属主）"
+            else
+                abort "ramdisk 重压失败：拒绝用未修改的 ramdisk 继续打包"
+            fi
         fi
         rm -rf "$rd_ref" "$rd_new"
     fi
 
     local out="$RELEASE_DIR/boot-${KERNEL_VERSION}.img"
     ../magiskboot repack "$base_img" "$out" || abort "打包失败"
-    find "$RELEASE_DIR" -maxdepth 1 -name 'boot-*.img' ! -name "$(basename "$out")" -delete 2>/dev/null || true
+    [ -s "$out" ] || abort "打包产物不存在或为空: $out"
+    echo "   包内 kernel sha256: $(sha256sum kernel | cut -d' ' -f1)"
+    # 只保留最近 3 个包：绝不动本次输出和当前底包（底包可能就在 release 里），
+    # 而且删除发生在产物校验之后。
+    local _keep=3 _idx=0 _old
+    while IFS= read -r _old; do
+        [ -z "$_old" ] && continue
+        [ "$(basename "$_old")" = "$(basename "$out")" ] && continue
+        [ "$(basename "$_old")" = "$(basename "$base_img")" ] && continue
+        _idx=$((_idx + 1))
+        [ "$_idx" -ge "$_keep" ] && rm -f "$_old"
+    done < <(ls -t "$RELEASE_DIR"/boot-*.img 2>/dev/null)
     ok "boot.img: $out"
     echo "   kernel sha256: $(sha256sum kernel | cut -d' ' -f1)"
     echo "   底包: $(basename "$base_img")"

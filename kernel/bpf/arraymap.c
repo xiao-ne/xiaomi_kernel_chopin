@@ -124,8 +124,14 @@ static struct bpf_map *array_map_alloc(union bpf_attr *attr)
 	/* allocate all map elements and zero-initialize them */
 	if (attr->map_flags & BPF_F_MMAPABLE) {
 		/* mmap() 需要 vmalloc 支撑的内存，不能用 kmalloc */
+		/*
+		 * VM_USERMAP 是 remap_vmalloc_range() 的硬性前提：
+		 * 缺少它时 array_map_mmap() 会拿到 -EINVAL，
+		 * BPF_F_MMAPABLE 的 map 永远无法 mmap。
+		 */
 		array = __vmalloc_node_range(array_size, 1, VMALLOC_START, VMALLOC_END,
-					     GFP_KERNEL | __GFP_ZERO, PAGE_KERNEL, 0,
+					     GFP_KERNEL | __GFP_ZERO, PAGE_KERNEL,
+					     VM_USERMAP,
 					     numa_node, __builtin_return_address(0));
 	} else {
 		array = bpf_map_area_alloc(array_size, numa_node);

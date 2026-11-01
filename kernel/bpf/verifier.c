@@ -2531,6 +2531,17 @@ static int check_func_arg(struct bpf_verifier_env *env, u32 regno,
 		}
 		if (reg->id)
 			meta->ptr_id = reg->id;
+		/*
+		 * 与上游 64620e0a1e71 一致：ringbuf 记录必须从头开始。
+		 * 允许偏移的话 submit(p + N) 会让 helper 用 sample-8
+		 * 反推出受控的 struct bpf_ringbuf 指针。
+		 */
+		if (reg->off || !tnum_is_const(reg->var_off) ||
+		    reg->var_off.value) {
+			verbose(env, "R%d must be a zero-offset pointer for alloc mem\n",
+				regno);
+			return -EINVAL;
+		}
 	} else if (arg_type_is_int_ptr(arg_type)) {
 		expected_type = PTR_TO_STACK;
 		if (!type_is_pkt_pointer(type) &&
@@ -2713,6 +2724,12 @@ static int check_map_func_compatibility(struct bpf_verifier_env *env,
 		    func_id != BPF_FUNC_msg_redirect_hash)
 			goto error;
 		break;
+	case BPF_MAP_TYPE_RINGBUF:
+		if (func_id != BPF_FUNC_ringbuf_output &&
+		    func_id != BPF_FUNC_ringbuf_reserve &&
+		    func_id != BPF_FUNC_ringbuf_query)
+			goto error;
+		break;
 	default:
 		break;
 	}
@@ -2766,6 +2783,12 @@ static int check_map_func_compatibility(struct bpf_verifier_env *env,
 	case BPF_FUNC_sk_storage_get:
 	case BPF_FUNC_sk_storage_delete:
 		if (map->map_type != BPF_MAP_TYPE_SK_STORAGE)
+			goto error;
+		break;
+	case BPF_FUNC_ringbuf_output:
+	case BPF_FUNC_ringbuf_reserve:
+	case BPF_FUNC_ringbuf_query:
+		if (map->map_type != BPF_MAP_TYPE_RINGBUF)
 			goto error;
 		break;
 	default:
