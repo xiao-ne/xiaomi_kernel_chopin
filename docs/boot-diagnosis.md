@@ -75,6 +75,29 @@ printf '\n1\n' | bash build.sh
 2. `uname -a` 是否为 `4.14.336-*`
 3. 若再崩：`/sys/fs/pstore/` 是否有 `console-ramoops*`
 
+## 底包校验（2026-11-01 修正）
+
+`pack_img` 选底包的判据**不再是** `strings boot.img | grep androidboot.selinux=enforcing` ——
+MTK 的 `androidboot.*` 由 bootloader 在 cmdline 传入，镜像里根本不存在这些字符串，
+旧判据对任何包都返回假（结果是要么 abort，要么被迫 `FORCE_BASE_IMG=1` 绕过唯一校验）。
+
+现在改为**解包后看 ramdisk**：
+
+```bash
+magiskboot unpack <img>
+zcat -f ramdisk.cpio | strings -a
+# 出现 ro.build.type=user 或 ro.debuggable=0 → 判为原厂 user 包，拒绝
+```
+
+`boot/boot.img` 当前就是原厂 user 包（`ro.build.type=user`、`ro.debuggable=0`），
+所以 `./build.sh pack` 会直接 abort。要打包必须：
+
+```bash
+export BASE_IMG=/path/to/eng-or-userdebug-boot.img   # ramdisk 里 ro.debuggable=1
+```
+
+`FORCE_BASE_IMG=1` 只用于已经确认能开机的底包，别拿它绕过这条检查。
+
 ## 相关文档 / 笔记
 
 - 项目规则：`~/AGENTS.md`（中文回答、注释、commit）
