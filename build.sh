@@ -287,6 +287,33 @@ pack_img() {
         ( cd "$rd_ref" && cpio -idm --quiet 'first_stage_ramdisk/fstab.*' < ../ramdisk.cpio 2>/dev/null )
         ( cd "$rd_new" && cpio -idm --quiet < ../ramdisk.cpio 2>/dev/null )
 
+        # 原厂 ramdisk 适配：fstab 的 system 行引用 /avb/*.avbpubkey，
+        # 但原厂 ramdisk 里没有 /avb 目录（原厂只用 vbmeta_system 校验 ext4）。
+        # 一旦把 system 改成 erofs 优先，这些公钥必须存在，否则 fs_mgr 校验失败。
+        local _avb_added=0
+        local _need_avb=0 _ff
+        for _ff in "$rd_new"/first_stage_ramdisk/fstab.*; do
+            [ -f "$_ff" ] && grep -q 'avb_keys=' "$_ff" && _need_avb=1
+        done
+        if [ "$_need_avb" = "1" ] && [ ! -s "$rd_new/first_stage_ramdisk/avb/q-gsi.avbpubkey" ]; then
+            local _keys=""
+            [ -s "$KERNEL_DIR/scripts/avb_keys/q-gsi.avbpubkey" ] && _keys="$KERNEL_DIR/scripts/avb_keys"
+            [ -z "$_keys" ] && [ -s "$boot_dir/avb_keys/q-gsi.avbpubkey" ] && _keys="$boot_dir/avb_keys"
+            if [ -n "$_keys" ]; then
+                mkdir -p "$rd_new/first_stage_ramdisk/avb"
+                cp -f "$_keys"/*.avbpubkey "$rd_new/first_stage_ramdisk/avb/" 2>/dev/null
+                echo "✅ 已补 GSI AVB 公钥: $(ls -1 "$rd_new/first_stage_ramdisk/avb" | tr '\n' ' ')"
+                _avb_added=1
+            else
+                echo "⚠️  缺 GSI 公钥（scripts/avb_keys 与 boot/avb_keys 都没有），改为从 fstab 移除 avb_keys="
+                for _ff in "$rd_new"/first_stage_ramdisk/fstab.*; do
+                    [ -f "$_ff" ] || continue
+                    sed -i 's/,avb_keys=[^, ]*//g' "$_ff"
+                done
+                _avb_added=1
+            fi
+        fi
+
         for fstab in "$rd_new"/first_stage_ramdisk/fstab.*; do
             [ -f "$fstab" ] && add_erofs_to_fstab "$fstab"
         done
@@ -299,19 +326,40 @@ pack_img() {
             if [ -f "$_b" ]; then cmp -s "$_f" "$_b" || _changed=1; else _changed=1; fi
         done
 
+        [ "${_avb_added:-0}" = "1" ] && _changed=1
+
         if [ "$_changed" -eq 0 ]; then
             echo "ℹ️  ramdisk 的 fstab 无需修改，保持原样（不重压，避免破坏属主/顺序）"
         else
-            ( cd "$rd_new" && cpio -it --quiet < ../ramdisk.cpio 2>/dev/null \
-                | cpio -H newc -o -R 0:0 --quiet > ../ramdisk.cpio.new ) \
-                && mv -f ramdisk.cpio.new ramdisk.cpio
-            echo "✅ ramdisk 已更新（保持原顺序 + root:root 属主）"
+            # 名字列表以原包为准（保持顺序），再把本次新增的文件追加进去——
+            # 只用原包列表的话，新补的 /avb 公钥会被静默丢掉（921 条进、921 条出）。
+            local _names="$PWD/_names$$"
+            ( cd "$rd_new" && cpio -it --quiet < ../ramdisk.cpio 2>/dev/null > "$_names" )
+            ( cd "$rd_new" && find first_stage_ramdisk/avb -type f 2>/dev/null \
+                | while IFS= read -r _nf; do grep -qxF "$_nf" "$_names" || echo "$_nf"; done ) \
+                >> "$_names" 2>/dev/null || true
+            if ( cd "$rd_new" && cpio -H newc -o -R 0:0 --quiet < "$_names" > ../ramdisk.cpio.new ) \
+                && mv -f ramdisk.cpio.new ramdisk.cpio; then
+                echo "✅ ramdisk 已更新（保持原顺序 + root:root 属主）"
+            else
+                rm -f "$_names"
+                abort "ramdisk 重压失败：拒绝用未修改的 ramdisk 继续打包"
+            fi
+            rm -f "$_names"
         fi
         rm -rf "$rd_ref" "$rd_new"
     fi
 
     local out="$RELEASE_DIR/boot-${KERNEL_VERSION}-${ts}.img"
     ../magiskboot repack ../boot.img "$out" || abort "打包失败"
+
+    # 原厂底包适配：cmdline 必须带 androidboot.selinux=enforcing
+    # （原厂是 buildvariant=user，不带该参数；eng 底包已带时脚本会自动跳过）
+    if [ -f "$KERNEL_DIR/scripts/patch_boot_cmdline.py" ]; then
+        python3 "$KERNEL_DIR/scripts/patch_boot_cmdline.py" "$out" "androidboot.selinux=enforcing" \
+            || echo "⚠️  cmdline 适配失败（底包可能不是标准 Android boot header）"
+    fi
+
     ok "boot.img: $out"
     cd "$boot_dir" && rm -rf "$tmp"
 }
