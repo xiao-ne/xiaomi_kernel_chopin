@@ -3,14 +3,7 @@
 # ==================== 配置区 ====================
 source ~/.bashrc && source ~/.profile
 
-# pahole (dwarves) 免 root 安装在 ~/local-tools，用于生成 vmlinux BTF
-# (CONFIG_DEBUG_INFO_BTF)。Ubuntu 的 ~/.bashrc 对非交互 shell 会 early return,
-# 所以这里显式补一次 PATH，避免 BTF 被静默跳过。
-if [ -x "$HOME/local-tools/root/usr/bin/pahole" ]; then
-    export PATH="$HOME/local-tools/root/usr/bin:$PATH"
-fi
-
-KERNEL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+KERNEL_DIR="$HOME/xiaomi_kernel_chopin"
 # A17 用的完整配置（chopin_defconfig 缺 28+ 个 MTK 驱动项，会卡在早期 init）
 DEFCONFIG="chopin_a17_defconfig"
 RELEASE_DIR="$KERNEL_DIR/release"
@@ -79,39 +72,6 @@ build_kernel() {
         echo "  缺失源文件配置已禁用"
     fi
 
-    # CONFIG_DEBUG_INFO_BTF 需要 pahole；缺了不会报错，只会静默不生成 BTF，
-    # 而 Android 17 的 CO-RE 依赖 /sys/kernel/btf/vmlinux，所以这里直接拦住。
-    if grep -q '^CONFIG_DEBUG_INFO_BTF=y' "$config" 2>/dev/null; then
-        command -v pahole > /dev/null || abort "pahole 未安装 - BTF 不会生成，Android 17 CO-RE 会失败"
-        ok "pahole: $(pahole --version 2>&1 | head -1)"
-    fi
-
-    # KernelSU-Next 版本号兜底：子模块缺少 .git 元数据（备份恢复/换机后常见）时，
-    # kernel/Kbuild 会把 KSU_VERSION 退化成 1，管理器会判定内核过旧而不放 root。
-    # SUSFS 移植分支 (susfs-port, v3.4.0-legacy+1) 的真实提交数是 3016，
-    # 新 Kbuild 带 +289 offset：30000 + 3016 + 289 = 33305。
-    # 判据必须是「真的能取到子模块自己的完整提交历史」：.git 缺失、gitlink 悬空
-    # （.git 指向已丢失的 .git/modules/...）、dubious ownership，以及 --depth 1
-    # 的 shallow 克隆（rev-list --count 只有 1）都会让 Kbuild 把版本算错。
-    KSU_FALLBACK_COUNT=3016
-    KSU_FALLBACK_TAG=v3.4.0-legacy
-    KSU_FALLBACK_ARGS=""
-    _ksu_root=$( cd drivers/kernelsu 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null )
-    _kern_root=$( git rev-parse --show-toplevel 2>/dev/null )
-    if [ -n "$_ksu_root" ] && [ "$_ksu_root" != "$_kern_root" ]; then
-        _ksu_count=$( git -C "$_ksu_root" rev-list --count HEAD 2>/dev/null )
-        _ksu_shallow=$( git -C "$_ksu_root" rev-parse --is-shallow-repository 2>/dev/null )
-    else
-        _ksu_count=""
-        _ksu_shallow=""
-    fi
-    if [ -z "${_ksu_count:-}" ] || [ "${_ksu_count:-0}" -le 1 ] || [ "${_ksu_shallow:-}" = "true" ]; then
-        KSU_FALLBACK_ARGS="KSU_GIT_VERSION_VALID=1 KSU_GIT_VERSION=$KSU_FALLBACK_COUNT KSU_GIT_TAG=$KSU_FALLBACK_TAG"
-        echo "⚠️  drivers/kernelsu 取不到完整 git 历史（.git 缺失/损坏/shallow），兜底 KSU 版本 $((30000 + KSU_FALLBACK_COUNT + 289))"
-    else
-        ok "KernelSU-Next 版本来源: git（${_ksu_count} 个提交）"
-    fi
-
     # 编译并保存完整日志（后台），同时实时显示错误
     echo "开始编译..."
     echo "📝 完整日志: $full_log"
@@ -119,7 +79,7 @@ build_kernel() {
     echo "📝 详细分析: $detail_log"
     
     # 编译并保存所有输出
-    make O=out -j$(nproc) CC="ccache clang-$CLANG_VERSION" KCFLAGS="-w" $KSU_FALLBACK_ARGS Image 2>&1 | tee "$full_log"
+    make O=out -j$(nproc) CC="ccache clang-$CLANG_VERSION" KCFLAGS="-w" Image 2>&1 | tee "$full_log"
     
     # 检查编译结果
     if [ ${PIPESTATUS[0]} -ne 0 ]; then
@@ -275,6 +235,7 @@ pack_img() {
     local img_dir="$KERNEL_DIR/out/arch/arm64/boot"
     local boot_dir="$KERNEL_DIR/boot"
     local tmp="$boot_dir/tmp_$$"
+    local ts=$(date +%Y%m%d_%H%M%S)
 
     cd "$boot_dir" || abort "boot目录不存在"
     rm -rf "$tmp" && mkdir "$tmp" && cd "$tmp"
@@ -285,6 +246,24 @@ pack_img() {
     # 判据必须是解包后的 ramdisk 内容：MTK 的 androidboot.* 由 bootloader 传入，
     # 镜像里根本没有这些字符串（旧的 strings 判据对任何包都返回假）。
     local base_img="${BASE_IMG:-$boot_dir/boot.img}"
+    local adapt_stock=0
+    # _base_is_stock：0 = 原厂 user ramdisk（可适配），1 = 不是。
+    # 判据必须是解包后的 ramdisk：MTK 的 androidboot.* 由 bootloader 传入，镜像里没有。
+    _base_is_stock() {
+        local _img="$1" _work _rc=1
+        [ -f "$_img" ] || return 1
+        _work=$(mktemp -d) || return 1
+        ( cd "$_work" && "$boot_dir/magiskboot" unpack "$_img" >/dev/null 2>&1 ) \
+            || { rm -rf "$_work"; return 1; }
+        if [ -f "$_work/ramdisk.cpio" ]; then
+            if zcat -f "$_work/ramdisk.cpio" 2>/dev/null | strings -a \
+                 | grep -qE 'ro\.build\.type=user|ro\.debuggable=0'; then
+                _rc=0
+            fi
+        fi
+        rm -rf "$_work"
+        return $_rc
+    }
     _base_ok() {
         local _img="$1" _work _rc=0
         [ -f "$_img" ] || return 1
@@ -305,6 +284,9 @@ pack_img() {
     }
     if [ "${FORCE_BASE_IMG:-0}" = "1" ]; then
         warn "FORCE_BASE_IMG=1：跳过底包安全检查（仅对已验证底包使用）"
+    elif _base_is_stock "$base_img"; then
+        adapt_stock=1
+        warn "底包是原厂 user ramdisk → 进入「官方底包适配」模式（补 erofs fstab / GSI 公钥 / androidboot.selinux）"
     elif ! _base_ok "$base_img"; then
         if [ -n "${BASE_IMG:-}" ]; then
             abort "BASE_IMG=$base_img 不是可开机底包（缺 androidboot.selinux=enforcing），拒绝打包"
@@ -321,12 +303,7 @@ pack_img() {
     fi
 
     ../magiskboot unpack "$base_img" || abort "解包失败"
-    if [ -f "$img_dir/Image.gz" ] && [ "$img_dir/Image.gz" -nt "$img_dir/Image" ]; then
-        cp "$img_dir/Image.gz" kernel || abort "拷贝 Image.gz 失败"
-    else
-        [ -f "$img_dir/Image" ] || abort "out/ 里没有 Image：先编译再打包（不要拿底包内核重新打包）"
-        cp "$img_dir/Image" kernel || abort "拷贝 Image 失败"
-    fi
+    [ -f "$img_dir/Image.gz" ] && cp "$img_dir/Image.gz" kernel || cp "$img_dir/Image" kernel
     [ -f "$img_dir/dtb" ] && cp "$img_dir/dtb" .
     [ -f "$img_dir/dtbo.img" ] && cp "$img_dir/dtbo.img" .
 
@@ -340,181 +317,77 @@ pack_img() {
     echo "🔍 kernel 版本: ${_kver:-未知}"
 
     # ========== EROFS fstab 检测与修复 ==========
-    # 检查 ramdisk 的 fstab，缺 erofs 条目就补上（add_erofs_to_fstab 幂等）。
-    # 关键约束：只有在 fstab 真的被改动时才重压 ramdisk，而且重压必须
-    #   1) 保持原包的条目顺序（用原 cpio 的名字列表驱动 cpio -o，不要 find）
-    #   2) 强制 root:root 属主（-R 0:0）
-    # 否则会出现「第一屏无限重启」：以普通用户身份 cpio -o 会把 2854 个条目的
-    # uid/gid 全写成 1000，Android 首阶段 init 直接起不来。
+    # 打包时检查 ramdisk 的 fstab，缺 erofs 条目就补上(add_erofs_to_fstab 幂等,已有则跳过)
     echo "🔍 检查 ramdisk fstab 是否包含 erofs..."
-    if [ "${SKIP_FSTAB_FIX:-0}" = "1" ]; then
-        echo "⏭️  SKIP_FSTAB_FIX=1：跳过 fstab 修改（保留原厂 ramdisk）"
-    elif [ -f ramdisk.cpio ]; then
-        local rd_ref="_rd_ref$$"
-        local rd_new="_rd_new$$"
-        rm -rf "$rd_ref" "$rd_new"
-        mkdir -p "$rd_ref" "$rd_new"
-        ( cd "$rd_ref" && cpio -idm --quiet 'first_stage_ramdisk/fstab.*' < ../ramdisk.cpio 2>/dev/null )
-        ( cd "$rd_new" && cpio -idm --quiet < ../ramdisk.cpio 2>/dev/null )
+    if [ -f ramdisk.cpio ]; then
+        local rd_tmp="$PWD/_rd_fix$$"
+        mkdir -p "$rd_tmp"
+        cpio -idm < "$PWD/ramdisk.cpio" 2>/dev/null || true
 
-        for fstab in "$rd_new"/first_stage_ramdisk/fstab.*; do
+        # 修复 first_stage_ramdisk 中的 fstab
+        for fstab in "$rd_tmp"/first_stage_ramdisk/fstab.*; do
             [ -f "$fstab" ] && add_erofs_to_fstab "$fstab"
         done
 
-        local _changed=0
-        local _f _b
-        for _f in "$rd_new"/first_stage_ramdisk/fstab.*; do
-            [ -f "$_f" ] || continue
-            _b="$rd_ref/first_stage_ramdisk/$(basename "$_f")"
-            if [ -f "$_b" ]; then cmp -s "$_f" "$_b" || _changed=1; else _changed=1; fi
-        done
-
-        if [ "$_changed" -eq 0 ]; then
-            echo "ℹ️  ramdisk 的 fstab 无需修改，保持原样（不重压，避免破坏属主/顺序）"
-        else
-            if ( cd "$rd_new" && cpio -it --quiet < ../ramdisk.cpio 2>/dev/null \
-                | cpio -H newc -o -R 0:0 --quiet > ../ramdisk.cpio.new ) \
-                && mv -f ramdisk.cpio.new ramdisk.cpio; then
-                ok "ramdisk 已更新（保持原顺序 + root:root 属主）"
-            else
-                abort "ramdisk 重压失败：拒绝用未修改的 ramdisk 继续打包"
+        # 原厂 ramdisk 适配：fstab 的 system 行引用 avb_keys=/avb/*.avbpubkey，
+        # 但原厂 ramdisk 里没有 /avb 目录（原厂只用 vbmeta_system 校验 ext4）。
+        # 一旦把 system 改成 erofs 优先，这些公钥必须存在，否则 fs_mgr 校验失败。
+        local _avb_added=0
+        if [ "$adapt_stock" = "1" ]; then
+            local _need_avb=0 _ff
+            for _ff in "$rd_tmp"/first_stage_ramdisk/fstab.*; do
+                [ -f "$_ff" ] && grep -q 'avb_keys=' "$_ff" && _need_avb=1
+            done
+            if [ "$_need_avb" = "1" ] && [ ! -s "$rd_tmp/first_stage_ramdisk/avb/q-gsi.avbpubkey" ]; then
+                local _keys=""
+                [ -s "$KERNEL_DIR/scripts/avb_keys/q-gsi.avbpubkey" ] && _keys="$KERNEL_DIR/scripts/avb_keys"
+                [ -z "$_keys" ] && [ -s "$boot_dir/avb_keys/q-gsi.avbpubkey" ] && _keys="$boot_dir/avb_keys"
+                if [ -n "$_keys" ]; then
+                    mkdir -p "$rd_tmp/first_stage_ramdisk/avb"
+                    cp -f "$_keys"/*.avbpubkey "$rd_tmp/first_stage_ramdisk/avb/" 2>/dev/null
+                    ok "已补 GSI AVB 公钥: $(ls -1 "$rd_tmp/first_stage_ramdisk/avb" | tr '\n' ' ')"
+                    _avb_added=1
+                else
+                    warn "缺 GSI 公钥（scripts/avb_keys 与 boot/avb_keys 都没有），改为从 fstab 移除 avb_keys="
+                    for _ff in "$rd_tmp"/first_stage_ramdisk/fstab.*; do
+                        [ -f "$_ff" ] || continue
+                        sed -i 's/,avb_keys=[^, ]*//g' "$_ff"
+                    done
+                    _avb_added=1
+                fi
             fi
         fi
-        rm -rf "$rd_ref" "$rd_new"
+
+        # 重新打包 ramdisk（保持原包顺序 + 新增文件，强制 root:root 属主）
+        local _names="$PWD/_names$$"
+        ( cd "$rd_tmp" && cpio -it --quiet < "$PWD/ramdisk.cpio" 2>/dev/null > "$_names" )
+        ( cd "$rd_tmp" && find first_stage_ramdisk/avb -type f 2>/dev/null \
+            | while IFS= read -r _nf; do grep -qxF "$_nf" "$_names" || echo "$_nf"; done ) \
+            >> "$_names" 2>/dev/null || true
+        if ( cd "$rd_tmp" && cpio -H newc -o -R 0:0 --quiet < "$_names" > "$PWD/ramdisk.cpio.new" ) \
+            && mv -f "$PWD/ramdisk.cpio.new" "$PWD/ramdisk.cpio"; then
+            rm -f "$_names"
+            ok "ramdisk 已更新（保持原顺序 + root:root 属主）"
+        else
+            rm -f "$_names"
+            abort "ramdisk 重压失败：拒绝用未修改的 ramdisk 继续打包"
+        fi
+        rm -rf "$rd_tmp"
+        echo "✅ ramdisk 已更新"
     fi
 
-    local out="$RELEASE_DIR/boot-${KERNEL_VERSION}.img"
+    local out="$RELEASE_DIR/boot-${KERNEL_VERSION}-${ts}.img"
     ../magiskboot repack "$base_img" "$out" || abort "打包失败"
     [ -s "$out" ] || abort "打包产物不存在或为空: $out"
-    echo "   包内 kernel sha256: $(sha256sum kernel | cut -d' ' -f1)"
-    # 只保留最新一个包：除本次输出外全部删除。
-    # 例外：当前底包如果本身就在 release 里，留着它 —— 删掉会让下次打包没有兜底底包。
-    local _old
-    while IFS= read -r _old; do
-        [ -z "$_old" ] && continue
-        [ "$(basename "$_old")" = "$(basename "$out")" ] && continue
-        if [ "$(dirname "$_old")" = "$RELEASE_DIR" ] && \
-           [ "$(basename "$_old")" = "$(basename "$base_img")" ]; then
-            warn "保留当前底包: $(basename "$_old")"
-            continue
-        fi
-        rm -f "$_old" && echo "   删除旧包: $(basename "$_old")"
-    done < <(ls -t "$RELEASE_DIR"/boot-*.img 2>/dev/null)
+
+    # 原厂底包适配：cmdline 必须带 androidboot.selinux=enforcing
+    # （原厂是 buildvariant=user；eng 底包已带时脚本会自动跳过）
+    if [ "$adapt_stock" = "1" ] && [ -f "$KERNEL_DIR/scripts/patch_boot_cmdline.py" ]; then
+        python3 "$KERNEL_DIR/scripts/patch_boot_cmdline.py" "$out" "androidboot.selinux=enforcing" \
+            || warn "cmdline 适配失败（底包可能不是标准 Android boot header）"
+    fi
     ok "boot.img: $out"
-    echo "   kernel sha256: $(sha256sum kernel | cut -d' ' -f1)"
-    echo "   底包: $(basename "$base_img")"
     cd "$boot_dir" && rm -rf "$tmp"
-}
-
-# ==================== 内核体检（原 check_kernel.sh 的功能，已并进来） ====================
-check_kernel() {
-    cd "$KERNEL_DIR" || abort "内核目录不存在"
-    local img="out/arch/arm64/boot/Image"
-    local vml=out/vmlinux
-    local map=out/System.map
-
-    echo "================ 1. 版本与产物 ================"
-    grep -m2 -E '^(VERSION|PATCHLEVEL|SUBLEVEL|EXTRAVERSION)' Makefile
-    if [ -f "$img" ]; then
-        ok "Image: $(stat -c %s "$img") 字节  sha256=$(sha256sum "$img" | cut -c1-16)…"
-        strings "$img" | grep -m1 "Linux version"
-    else
-        echo "❌ 还没有 Image（先跑一次编译）"
-    fi
-    if [ -f "$vml" ]; then
-        local btf_hex=$(readelf -SW "$vml" 2>/dev/null | awk '$2 == ".BTF" {print $6}')
-        if [ -n "$btf_hex" ]; then
-            local btf_dec=$((16#$btf_hex))
-            ok ".BTF 段: $btf_dec 字节"
-        else
-            echo "❌ vmlinux 里没有 .BTF 段（CO-RE 会失败）"
-        fi
-    fi
-
-    echo
-    echo "================ 2. 关键符号（System.map） ================"
-    if [ -f "$map" ]; then
-        local syms="start_kernel kernel_init bpf_ringbuf_reserve bpf_ringbuf_submit bpf_ringbuf_discard bpf_ringbuf_output bpf_ringbuf_query bpf_sk_lookup_tcp bpf_sk_lookup_udp bpf_sk_release bpf_get_socket_cookie_sock bpf_sk_storage_get tnum_arshift __cgroup_bpf_run_filter_getsockopt __cgroup_bpf_run_filter_setsockopt ksu_handle_execveat ksu_handle_susfs_cmd"
-        local miss=0
-        for s in $syms; do
-            local line
-            line=$(grep -m1 -E " $s\$" "$map")
-            if [ -n "$line" ]; then
-                printf 'OK   %s\n' "$line"
-            else
-                printf 'MISS %s\n' "$s"
-                miss=$((miss+1))
-            fi
-        done
-        [ "$miss" -eq 0 ] && ok "关键符号齐全" || echo "⚠️  缺 $miss 个符号"
-        local nksu
-        nksu=$(grep -cE ' [tT] ksu_' "$map")
-        [ "$nksu" -gt 100 ] && ok "KernelSU 符号 $nksu 个" || echo "⚠️  KernelSU 符号只有 $nksu 个（KSU 可能没编进去）"
-    else
-        echo "❌ 没有 System.map"
-    fi
-
-    echo
-    echo "================ 3. 关键 CONFIG ================"
-    if [ -f out/.config ]; then
-        grep -E '^CONFIG_(LOCALVERSION|DEBUG_INFO_BTF|BPF_SYSCALL|PSI|BLK_CGROUP|CGROUP_DEVICE|CGROUP_PIDS|EROFS_FS|EROFS_FS_XATTR|KSU|MTK_RAM_CONSOLE|MTK_AEE_IPANIC|PANIC_ON_OOPS|PANIC_TIMEOUT|ARCH_MTK_PROJECT)=' out/.config
-        local ncfg
-        ncfg=$(grep -c '^CONFIG_' out/.config)
-        echo "配置项总数: $ncfg"
-    else
-        echo "❌ 没有 out/.config"
-    fi
-
-    echo
-    echo "================ 4. Android 17 移植要点是否在位 ================"
-    _grep_point() {
-        if grep -q "$2" "$1" 2>/dev/null; then printf 'OK   %s\n' "$3"; else printf 'MISS %s\n' "$3"; fi
-    }
-    _grep_point kernel/sys.c '5\.10\.209'            "uname 欺骗 -> 5.10.209"
-    _grep_point include/uapi/linux/bpf.h 'BPF_CGROUP_INET_SOCK_RELEASE' "attach type 34 (sock release)"
-    _grep_point net/core/filter.c 'bpf_sk_base_func_proto'              "cgroup_skb 的 sk_lookup 分派"
-    _grep_point kernel/bpf/verifier.c 'check_mem_region_access'          "PTR_TO_MEM 帮助函数入参"
-    _grep_point kernel/bpf/verifier.c 'case BPF_ARSH:'                   "ARSH 标量跟踪"
-    _grep_point net/socket.c 'BPF_CGROUP_RUN_PROG_GETSOCKOPT'            "sockopt 钩子调用点"
-    _grep_point net/core/bpf_sk_storage.c 'ARG_PTR_TO_SOCK_COMMON'       "sk_storage 接受 sock_common"
-
-    echo
-    echo "================ 5. 残留调试打印检查 ================"
-    if [ -f "$img" ]; then
-        local dbg
-        dbg=$(strings "$img" | grep -c 'bpfdbg')
-        [ "$dbg" -eq 0 ] && ok "无 bpfdbg 调试打印" || echo "⚠️  Image 里还有 $dbg 处 bpfdbg 打印"
-    fi
-
-    echo
-    echo "================ 6. 打包产物 ================"
-    ls -lht "$RELEASE_DIR"/*.img 2>/dev/null | head -5 || echo "（还没有 release 包）"
-
-    echo
-    echo "================ 7. 工具链 ================"
-    echo "clang-$CLANG_VERSION: $(clang-$CLANG_VERSION --version 2>/dev/null | head -1)"
-    echo "pahole: $(pahole --version 2>&1 | head -1)"
-    echo "ccache: $(ccache --version 2>/dev/null | head -1)"
-
-    echo
-    echo "================ 8. 仓库状态 ================"
-    git log -3 --oneline 2>/dev/null
-    local dirty
-    dirty=$(git status --porcelain 2>/dev/null | wc -l)
-    [ "$dirty" -eq 0 ] && ok "工作区干净" || echo "⚠️  有 $dirty 个未提交改动"
-
-    echo
-    echo "================ 9. 最近一次构建日志 ================"
-    local latest
-    latest=$(ls -t "$KERNEL_DIR"/full_*.log 2>/dev/null | head -1)
-    if [ -n "$latest" ]; then
-        echo "文件: $latest"
-        tail -12 "$latest"
-    else
-        echo "（无构建日志）"
-    fi
-    echo
-    ok "体检结束"
 }
 
 # ==================== 一次性依赖安装 ====================
@@ -586,7 +459,6 @@ show_error() {
 }
 
 # ==================== 主流程 ====================
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 setup_once
 mkdir -p "$RELEASE_DIR"
 ccache -M 32G
@@ -595,27 +467,12 @@ echo ""
 echo "  Xiaomi chopin 内核编译"
 echo ""
 
-# 命令行模式：./build.sh all|compile|pack|check|cleanlog|error
-MODE=""
-case "${1:-}" in
-    all|compile|pack|check|cleanlog|error) MODE="$1" ;;
-    "") ;;
-    *) echo "用法: ./build.sh [all|compile|pack|check|cleanlog|error]"; exit 1 ;;
-esac
+read -p "版本名 (默认 $KERNEL_VERSION): " v
+[ -n "$v" ] && KERNEL_VERSION="$v"
 
-if [ -z "$MODE" ]; then
-    read -p "版本名 (默认 $KERNEL_VERSION): " v
-    [ -n "$v" ] && KERNEL_VERSION="$v"
-
-    echo ""
-    echo "1) 编译+打包  2) 仅编译  3) 仅打包  4) 清理旧日志  5) 查看最近错误  6) 内核体检"
-    read -p "选择: " c
-else
-    echo "模式: $MODE"
-    case $MODE in
-        all) c=1 ;; compile) c=2 ;; pack) c=3 ;; cleanlog) c=4 ;; error) c=5 ;; check) c=6 ;;
-    esac
-fi
+echo ""
+echo "1) 编译+打包  2) 仅编译  3) 仅打包  4) 清理旧日志  5) 查看最近错误"
+read -p "选择: " c
 
 case $c in
     1) build_kernel && pack_img ;;
@@ -623,7 +480,6 @@ case $c in
     3) pack_img ;;
     4) clean_logs ;;
     5) show_error ;;
-    6) check_kernel ;;
     *) echo "无效选择" ;;
 esac
 
@@ -635,4 +491,3 @@ ls -lh "$RELEASE_DIR"/*.img 2>/dev/null
 echo ""
 echo "📋 日志文件:"
 ls -lth "$KERNEL_DIR"/*_*.log 2>/dev/null | head -5
-fi
