@@ -320,9 +320,13 @@ pack_img() {
     # 打包时检查 ramdisk 的 fstab，缺 erofs 条目就补上(add_erofs_to_fstab 幂等,已有则跳过)
     echo "🔍 检查 ramdisk fstab 是否包含 erofs..."
     if [ -f ramdisk.cpio ]; then
+        # 下面的子 shell 会 cd 进解包目录，$PWD 随之改变：所有绝对路径必须提前取好
+        # （旧写法把 ramdisk 解到 $tmp 根目录、却去 $rd_tmp 里找 fstab，导致 fstab 从未被修改）
+        local rd_cpio="$PWD/ramdisk.cpio"
         local rd_tmp="$PWD/_rd_fix$$"
         mkdir -p "$rd_tmp"
-        cpio -idm < "$PWD/ramdisk.cpio" 2>/dev/null || true
+        ( cd "$rd_tmp" && cpio -idm --quiet --no-absolute-filenames < "$rd_cpio" ) \
+            || abort "ramdisk 解包失败（cpio -idm 退出异常）"
 
         # 修复 first_stage_ramdisk 中的 fstab
         for fstab in "$rd_tmp"/first_stage_ramdisk/fstab.*; do
@@ -360,12 +364,13 @@ pack_img() {
 
         # 重新打包 ramdisk（保持原包顺序 + 新增文件，强制 root:root 属主）
         local _names="$PWD/_names$$"
-        ( cd "$rd_tmp" && cpio -it --quiet < "$PWD/ramdisk.cpio" 2>/dev/null > "$_names" )
+        ( cd "$rd_tmp" && cpio -it --quiet < "$rd_cpio" 2>/dev/null > "$_names" ) \
+            || abort "读取 ramdisk 文件列表失败"
         ( cd "$rd_tmp" && find first_stage_ramdisk/avb -type f 2>/dev/null \
             | while IFS= read -r _nf; do grep -qxF "$_nf" "$_names" || echo "$_nf"; done ) \
             >> "$_names" 2>/dev/null || true
-        if ( cd "$rd_tmp" && cpio -H newc -o -R 0:0 --quiet < "$_names" > "$PWD/ramdisk.cpio.new" ) \
-            && mv -f "$PWD/ramdisk.cpio.new" "$PWD/ramdisk.cpio"; then
+        if ( cd "$rd_tmp" && cpio -H newc -o -R 0:0 --quiet < "$_names" > "$rd_cpio.new" ) \
+            && [ -s "$rd_cpio.new" ] && mv -f "$rd_cpio.new" "$rd_cpio"; then
             rm -f "$_names"
             ok "ramdisk 已更新（保持原顺序 + root:root 属主）"
         else
