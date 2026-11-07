@@ -135,3 +135,41 @@ grep -E 'mt_gpt_init|__initcall_mt_gpt_init6|mtk_stmr_init' out/System.map
 make -f scripts/Makefile.asm-generic src=uapi/asm obj=out/arch/arm64/include/generated/uapi/asm
 make -f scripts/Makefile.asm-generic src=asm obj=out/arch/arm64/include/generated/asm
 ```
+
+## pack_img() 的 ramdisk 重压 bug（2026-11-07 修复，commit 6ee78380d）
+
+症状（用户在 `~/xiaomi_kernel_chopin` 里跑 `./build.sh` 选打包时）：
+
+```
+build.sh: line 363: cd: _rd_fix82131: No such file or directory
+build.sh: line 367: /home/xiaone/xiaomi_kernel_chopin/boot/tmp_136190/ramdisk.cpio: No such file or directory
+mv: cannot stat '.../ramdisk.cpio.new': No such file or directory
+❌ ramdisk 重压失败：拒绝用未修改的 ramdisk 继续打包
+```
+
+两只虫子叠在一起：
+
+1. **解包去错目录**：`mkdir -p "$rd_tmp"` 之后写的是 `cpio -idm < "$PWD/ramdisk.cpio"`，
+   没有 `cd` 进 `$rd_tmp`，于是内容全解到了 `boot/tmp_$$` 根目录；后面所有检查都
+   去 `$rd_tmp/first_stage_ramdisk/` 里找 → 全部空转。**这是静默失效**：日志照样
+   打印「fstab 修复完成」「已补 GSI AVB 公钥」，但产物里 erofs 行与公钥根本不存在。
+2. **$PWD 漂移**：三个子 shell 里先 `cd "$rd_tmp"` 再引用 `"$PWD/ramdisk.cpio"`，
+   此刻 `$PWD` 已经变成临时目录 → 读不到输入，写出一个 **512 字节的空 cpio**，
+   随后的 `mv` 自然落空。
+
+修法：解包显式在 `$rd_tmp` 内执行；把 `ramdisk.cpio` 在 `cd` 之前固化成
+`rd_cpio="$PWD/ramdisk.cpio"`，读取列表、重压输出、`mv` 全走这个绝对路径；
+对重压产物加 `[ -s ... ]` 非空校验，宁可报错也不产出空 ramdisk。
+
+**验证方式（必须是真跑，不是 `bash -n`）**：
+
+```bash
+printf 'TEST\n3\n' | ./build.sh          # 3 = 仅打包；底包用原厂 user boot.img
+# 再看产物解开后 fstab 是否真有 erofs 行、/avb 是否有三把公钥
+magiskboot unpack release/boot-*.img && cd rd && cpio -idm < ../ramdisk.cpio
+grep -n erofs first_stage_ramdisk/fstab.*   # 期望 system/vendor/product/mi_ext(/system_ext) 各一行，且在 ext4 行之前
+ls first_stage_ramdisk/avb/                 # 期望 q-gsi / r-gsi / s-gsi 三把
+```
+
+> 教训：上次「bash -n 通过 + 看日志说成功」就收工，结果交付的是静默失效的版本。
+> 这类 shell 补丁只有**重跑一遍并解包复验产物**才算验证。
