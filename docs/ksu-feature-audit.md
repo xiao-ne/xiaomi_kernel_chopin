@@ -61,3 +61,73 @@ ksud kernel notify-module-mounted          # dmesg: on_module_mounted!
 - `/proc/mounts` 的格式是 `source mountpoint fstype options`，**没有** `mount` 命令输出里的 `on` / `type` 字样；用 `awk '$2==m && $3=="overlay"'` 判断。
 - `adb push` 到 `/data/local/tmp` 时超长文件名会被截断（`ksu-metamount-umount.zi`），用短名再装。
 - 重启后 adb 偶尔掉线（Windows 剩 `USB\VID_2717&PID_FF48` 且无子接口），在通知栏把 USB 用途改成「传输文件」即可。
+
+## ADB Root：从死代码到可用
+
+### 现象
+
+`ADB Root` 开关打开后 `adb root` 仍报 `adbd cannot run as root in production builds`，
+`adb shell id` 还是 `uid=2000(shell)`；dmesg 里只有
+`KernelSU: handle_setresuid from 0 to 2000`，**没有** `escape to root for adb`。
+
+### 根因
+
+`feature/adb_root.c` 的 `ksu_adb_root_handle_execve*` 只有两个调用点：
+
+- `hook/hook_manager.c:358-359` —— 需要 `CONFIG_KPROBES` + `CONFIG_KSU_KPROBES_HOOK`；
+- `hook/syscall_table_hook.c:151/174` —— Kconfig 要求 kernel >= 4.17。
+
+本内核是 4.14 + `CONFIG_KSU_MANUAL_HOOK=y` + `# CONFIG_KPROBES is not set`，
+两条都不成立，所以这个开关只是翻了一个没人看的 static key，属于死代码。
+
+### 修复
+
+1. `feature/adb_root.c`
+   - 把 `do_ksu_adb_root_handle_execve()` 的实现拆成 `adb_root_apply(regs, envp_p)`；
+   - 新增 `is_adbd_kernel_path(const char *name)` 与
+     `long ksu_adb_root_handle_execve_kargs(const char *path, void *envp_p)`，
+     供没有 `pt_regs` 的 manual hook 调用；
+   - `adb_root.h` 补原型。
+2. `fs/exec.c`：在 `do_execveat_common()` 的 `#ifdef CONFIG_KSU_MANUAL_HOOK`
+   分支里，`ksu_handle_execveat(...)` 之后调用
+   `ksu_adb_root_handle_execve_kargs(filename->name, &envp.ptr.native)`。
+
+### 三个坑
+
+1. **init 在 execve 前就改了子进程的 SID**。init 对 adbd 调过 `setexeccon()` 之后才
+   execve，所以进入 `do_execveat_common()` 时 `is_init(current_cred())` 已经是 false。
+   改用 `ppid == 1` 兜底：
+   `if (current->pid == 1 || (ppid != 1 && !is_init(current_cred()))) return 0;`
+2. **批量读 envp 会整批 fault**。原 `setup_ld_preload()` 一次 `copy_from_user` 读 16 个
+   指针，当数组尾部紧邻未映射页时整批失败，dmesg 只留一句 `truncated envp array!`。
+   改成逐指针读，fault 即视为数组结束（上限 1024 项，一项都读不到就放弃注入）。
+3. **`struct user_arg_ptr` 的字段偏移**。本内核 `CONFIG_COMPAT=y`，结构是
+   `{ bool is_compat; union { const char *native; ... } }`，`is_compat` 在偏移 0、
+   `ptr.native` 在偏移 8。传 `&envp` 读到的是 `is_compat`（值 0），必须传
+   `&envp.ptr.native`。这一条让调试多刷了两次机。
+
+### 验证
+
+```sh
+uname -r                                  # 4.14.336-KsAdb
+/data/adb/ksud feature set adb_root 1
+/data/adb/ksud feature save
+adb reboot
+adb shell id                              # uid=0(root) ... context=u:r:ksu:s0
+adb root                                  # adbd is already running as root
+tr '\0' '\n' < /proc/$(pidof adbd)/environ | grep LD_
+# LD_PRELOAD=/data/adb/ksu/lib/libadbroot.so
+# LD_LIBRARY_PATH=/data/adb/ksu/lib
+dmesg | grep -F "escape to root for adb"
+```
+
+反向验证：`feature set adb_root 0` + 重启 → `adb shell id` 回到 `uid=2000(shell)`。
+
+### 注意
+
+- 开关的生效点是 **adbd 启动时**，所以要么重启设备、要么重启 adbd；而
+  `setprop ctl.stop adbd; setprop ctl.start adbd` 很容易让 adb 变 `offline`
+  （adbd 重启老毛病），**推荐直接重启手机**。
+- 本 ROM 是 user 版，`adb root` 命令本身仍会被 adbd 以
+  "not run as root in production builds" 拒绝；这里做到的是 "adbd 进程本身就是
+  root" —— `adb shell` 直接是 root，`adb remount` 之类仍受 user 版与 dm-verity 限制。

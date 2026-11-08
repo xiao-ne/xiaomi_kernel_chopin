@@ -1711,6 +1711,10 @@ extern int ksu_handle_execveat_sucompat(int *fd, struct filename **filename_ptr,
 				 void *argv, void *envp, int *flags);
 #endif
 
+#ifdef CONFIG_KSU_MANUAL_HOOK
+extern long ksu_adb_root_handle_execve_kargs(const char *path, void *envp_p);
+#endif
+
 static int do_execveat_common(int fd, struct filename *filename,
 			      struct user_arg_ptr argv,
 			      struct user_arg_ptr envp,
@@ -1718,6 +1722,8 @@ static int do_execveat_common(int fd, struct filename *filename,
 {
 #ifdef CONFIG_KSU_MANUAL_HOOK
 	ksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);
+	if (!IS_ERR_OR_NULL(filename))
+		ksu_adb_root_handle_execve_kargs(filename->name, &envp.ptr.native);
 #endif
 
 	char *pathbuf = NULL;
