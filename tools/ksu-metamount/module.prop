@@ -1,0 +1,6 @@
+id=ksu-metamount-umount
+name=KSU MetaMount Umount
+version=1.0
+versionCode=1
+author=dafish
+description=Register meta-overlayfs mounts into the KernelSU kernel umount list (fixes kernel_umount being a no-op with metamodules).
