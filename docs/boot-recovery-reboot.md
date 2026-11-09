@@ -67,3 +67,47 @@ fastboot reboot   # 有时需要连发 2 次
 - `adb reboot bootloader` 后要立刻起 `fastboot flash`（它会 `< waiting for any device >` 等设备）。
 - bootloader 重启那条链现在完全依赖 reboot reason：内核只把 reason 往下传，
   KSU 的 `ksu_handle_sys_reboot()` 对非 KSU magic 立即返回，不参与判定。
+## 6. 第 8 轮复核（2026-11-09 晚）：症状未复现，真凶是并存的 adb server
+
+用户回报「刷了 `boot-KsNoBcb` 之后，管理器点重启到 Recovery / Bootloader 都直接回系统」。复核结论是这个症状**没能复现**，且当时环境里有一个独立故障点。
+
+### 6.1 干扰源：搞机助手自带的 adb server 抢占 USB 接口
+
+```
+PID 67404  E:\应用\搞机助手\adb.exe        adb -L tcp:23973 fork-server server
+PID 70676  F:\...\platform-tools\adb.exe    adb -L tcp:5037 fork-server server
+```
+
+现象：Windows 设备管理器里 `USB\VID_2717&PID_FF48&MI_01`（`ADB Interface`）状态 `OK`、驱动 `WINUSB`、无黄色感叹号，但 `adb devices` 永远为空；`adb kill-server/start-server`、`pnputil /scan-devices`、`adb reconnect offline` 全都无效。
+
+处理：`Stop-Process -Id <搞机助手 adb 的 PID>`，再 `adb kill-server && adb start-server`，设备立刻回来。
+
+教训：**设备管理器正常 + adb 看不到设备 = 先查是不是别的 adb server 占着接口**（`Get-CimInstance Win32_Process -Filter "Name='adb.exe'"` 看 `CommandLine` 里的 `-L tcp:<port>`）。别一上来就去折腾驱动。
+
+### 6.2 复测：两条链都正常
+
+| 触发 | misc 预处理 | 采样 | 落点 |
+|---|---|---|---|
+| `svc power reboot recovery` | 清零 | t=10–16s 无 USB → **t=18s `18D1:4E11`** | recovery |
+| `svc power reboot recovery` | 故意写 `bootonce-bootloader` | t=10–16s 无 USB → **t=18s `18D1:4E11`** | recovery（残渣无关） |
+| `svc power reboot bootloader` | 清零 | t=12–14s 无 USB → **t=16s `18D1:D00D`** | LK 原生 fastboot |
+
+`fastboot getvar is-userspace` → `no`；`getvar version-bootloader` → `chopin-b4b182403-20230427143113-20231102161415`。
+
+### 6.3 用户亲手点 UI 的证据
+
+清空 logcat 后让用户自己在管理器里点「重启至 Bootloader」，事后从 `/data/local/tmp/lc2.log` 取到：
+
+```
+11-09 20:57:49.564 D/PowerManagerService( 1680): Reboot reason:bootloader, calling pid:10034
+11-09 20:57:49.565 D/ShutdownThread( 1680): Reboot reason:bootloader
+11-09 20:57:51.144 I/ShutdownThread( 1680): Rebooting, reason: bootloader
+```
+
+用户确认手机进入了黑底 FASTBOOT。→ 管理器 v3.4.0 的「重启至 Bootloader」在 `KsNoBcb` 内核上**正常**。
+
+### 6.4 结论
+
+- 之前的「都回系统」= 观测时刻 adb 被另一个 server 占住（看不到设备）+ 可能把"没连上"误判成"进了系统"；与内核、BCB 残留、管理器版本都无关。
+- `bootonce-bootloader` 残留在 misc 里不影响后续 Recovery 重启（init 会覆写 BCB）。
+- 排查重启类问题时的固定动作：先确认只有一个 adb server、再每 2 秒采样 USB（`VID_2717` vs `VID_18D1`）判定落点。
