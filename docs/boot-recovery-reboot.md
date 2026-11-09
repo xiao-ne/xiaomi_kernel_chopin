@@ -1,105 +1,69 @@
-# 重启到 Bootloader 进不去（chopin，MTK A/B）
+# 重启菜单（Recovery / Bootloader / Download / EDL）在 chopin 上的真实行为
 
-## 现象
+本文件记录 `4.14.336` chopin（Redmi Note 10 Pro / MT6893，A/B 无 recovery 分区）上，
+KernelSU 管理器「重启」菜单各入口的实测行为、MTK LK 的 BCB 语义，以及一次错误的修复尝试。
 
-管理器（KernelSU-Next v3.4.0）右上角「重启」菜单里的「重启至 Bootloader」，点了之后
-手机短暂黑屏、重启，最后回到 Android 系统，而不是停在 fastboot。
+## 1. 结论速查
 
-同样的现象也会出现在任何走「框架重启」的入口：`svc power reboot bootloader`。
+| 入口 | 底层动作 | 结果 |
+|---|---|---|
+| 重启至 Recovery | 管理器先切飞行模式，再 `svc power reboot recovery`；init 写 BCB=`boot-recovery` | 进 recovery（boot ramdisk 里的 `system/bin/recovery`） |
+| 重启至 Bootloader | `PowerManager.reboot("bootloader")` → ShutdownThread → `Reboot reason: bootloader`；init 写 BCB=`bootonce-bootloader` | **LK 原生 fastboot**（`is-userspace: no`，`version-bootloader: chopin-b4b182403-...`），15s 到达并长期停留 |
+| 重启至 Download | 系统侧没有任何实现 | 只会普通重启回系统 |
+| 重启至 EDL | 系统侧没有任何实现 | 只会普通重启回系统 |
 
-## 结论（一句话）
+## 2. 关键证据：BCB 字符串决定 LK 走哪条路
 
-系统写进 `misc` 分区的 BCB 命令是 Qualcomm 约定的 `bootonce-bootloader`，
-而 chopin 的 MTK LK 只认 `boot-fastboot` / `boot-recovery`，于是它忽略这个请求、照常开机。
+`lk_a`（8 MB，未压缩）里出现的 BCB 命令串只有 `boot-fastboot` 与 `boot-recovery`：
 
-## 证据
+- `boot-recovery` → 引导 recovery。
+- `bootonce-bootloader`（Android 标准串，`libbootloader_message.so` 里就这一个）→ LK **自己** 进 fastboot 并停住。
+- `boot-fastboot`（MTK 私有串）→ LK **引导内核** 进 fastboot 模式 = **fastbootd**（`is-userspace: yes`）。
 
-### 1. BCB 是谁写的
-
-`/system/lib64/libbootloader_message.so`（116040 字节）里只有两条命令串：
-
-```
-boot-recovery          <- 走恢复模式用这条，所以恢复模式一直正常
-bootonce-bootloader    <- 走 fastboot/bootloader 用这条，MTK 不认
-```
-
-`/system/bin/init` 里的相关串：`reboot-bootloader: Error writing bootloader_message: `。
-
-### 2. LK 认什么
-
-导出 `lk_a`（8388608 字节，未压缩，13319 条 ASCII 串）后搜 BCB 命令串，
-只有这五条：`boot-fastboot`、`boot-recovery`、`reboot-bootloader`、
-`reboot-fastboot`、`reboot-recovery`；搜 `once` 只命中 RPMB nonce 之类的无关串，
-**没有 `bootonce-bootloader`**。
-
-### 3. 上层怎么重启的
-
-| 入口 | 是否写 BCB | 写了什么 | 结果 |
-| --- | --- | --- | --- |
-| 手写 misc + `reboot` | 手动 | `boot-recovery` | 进 recovery ✅ |
-| 手写 misc + `reboot` | 手动 | `boot-fastboot` | 进 fastboot 并停住 ✅ |
-| `adb reboot bootloader` | 是（adbd） | `bootonce-bootloader` | 一般能进 fastboot（见下） |
-| `su -c reboot bootloader`（toybox） | **否** | misc 保持全零 | 回系统 ❌ |
-| `svc power reboot bootloader`（管理器同款） | 是（init） | `bootonce-bootloader` | 回系统 ❌ |
-
-`/sys/fs/pstore/console-ramoops` 里 `svc` 那条路的样子：
+实测（管理器点「重启至 Bootloader」，每 2s 采样 USB 与 fastboot 协议）：
 
 ```
-(4)[484:init]init: Received sys.powerctl='reboot,bootloader' from pid: 1680 (system_server)
-init: Reboot start, reason: reboot,bootloader, reboot_target: bootloader
-init: Stopping 267 services by sending SIGTERM
-mtk_rgu_dram_reserved: MTK_WDT_MODE(0x25)
-wdt_arch_reset: disable pwrap before wdt reset
+无补丁内核（4.14.336-KsNoBcb）：
+  t=15s → 18D1:D00D  is-userspace: no     ← LK 原生 fastboot
+  t=169s 仍然 is-userspace: no            ← 稳定停留
+
+带 BCB 翻译补丁的内核（4.14.336-KsBcb）：
+  t=2..30s   2717:FF08                    ← LK 阶段
+  t=34..57s  无 USB                        ← LK 交出，开始引导内核
+  t=60s →    18D1:D00D  is-userspace: yes  ← fastbootd
 ```
 
-注意两点：一是**根本没有走到 reboot 系统调用**（MTK 看门狗在关服务之后直接把整机复位），
-二是复位前 misc 里留下的是 `bootonce-bootloader`。
+## 3. 那次错误的尝试（已回退）
 
-## 补丁
+曾经加过一个 `kernel/runtime/boot_bcb.c` 轮询器：每秒读 `misc`，把
+`bootonce-bootloader` 改写成 `boot-fastboot`，理由是"LK 不认前一个串"。实测证明这个前提是错的：
 
-`drivers/kernelsu/kernel/runtime/boot_bcb.c`（新文件），做一件事：
-把 `misc` 里的 `bootonce-bootloader` 改写成 `boot-fastboot`。
+- 改写确实发生了（写 `bootonce-bootloader` 后 4 秒回读到 `boot-fastboot`）。
+- 结果反而把"真 fastboot"降级成"fastbootd"，就是用户看到的「点 bootloader 落在 fastbootd」。
 
-两条触发路径：
+补丁已在子模块中整体回退（`git reset --hard ce8921ee~1`，HEAD 回到 `625159a2`），
+`kernel/runtime/boot_bcb.c|h` 与 Kbuild / `core/init.c` / `supercall/supercall.c` 的引用全部移除。
 
-1. `ksu_fix_boot_bcb(cmd)`：挂在 `ksu_handle_sys_reboot()` 的开头，处理
-   `LINUX_REBOOT_CMD_RESTART` / `_RESTART2`（覆盖 `adb reboot bootloader`、
-   toybox `reboot` 之类会走到系统调用的路径）。
-2. `ksu_boot_bcb_start()`：一个 1 秒周期的 `delayed_work` 轮询器。
-   因为 `svc power reboot bootloader` 那条路**永远不会走到 reboot 系统调用**
-   （见上面 pstore），只靠钩子救不了它，只能主动去盯 BCB。
+## 4. 复现与验证命令
 
-接线：`kernel/Kbuild` 加 `kernelsu-objs += runtime/boot_bcb.o`；
-`kernel/core/init.c` 在 `ksu_permissive_persist_init();` 后调 `ksu_boot_bcb_start();`；
-`kernel/supercall/supercall.c` 在 `ksu_handle_sys_reboot()` 第一行前调 `ksu_fix_boot_bcb(cmd);`。
+```bash
+# 看当前 fastboot 是谁
+fastboot getvar is-userspace      # no = LK 原生；yes = fastbootd
+fastboot getvar version-bootloader  # LK 会给 chopin-b4b182403-...
 
-写盘用 `override_creds(ksu_cred)` + `filp_open("/dev/block/by-name/misc", O_WRONLY)`
-+ `kernel_write()` 32 字节 + `vfs_fsync()`，语义与 allowlist 落盘一致。
+# 手工写 BCB 后普通重启（会进 LK fastboot）
+adb shell "su -c 'dd if=/dev/zero of=/dev/block/by-name/misc bs=1 count=64 conv=notrunc'"
+adb shell "su -c \"printf 'bootonce-bootloader' | dd of=/dev/block/by-name/misc bs=1 seek=0 conv=notrunc\""
+adb reboot
 
-## 验证
+# 回系统
+fastboot reboot   # 有时需要连发 2 次
+```
 
-- 内核字符串（`strings -a out/arch/arm64/boot/Image`）：`bootonce-bootloader`、
-  `boot-fastboot`、`KernelSU: boot_bcb: %s -> %s`、`KernelSU: boot_bcb: cannot open misc for write`。
-- 钩子直证：自写 freestanding aarch64 程序 `bcbtest` 发一个非法 magic 的 `reboot()`
-  系统调用，misc 由 `bootonce-bootloader` 变成 `boot-fastboot`，dmesg：
+## 5. 注意
 
-  ```
-  [362.790607] (4)[8910:bcbtest]KernelSU: boot_bcb: bootonce-bootloader -> boot-fastboot
-  ```
-
-- 端到端：`su -c sh /data/local/tmp/bt.sh`（内容 `sleep 3; svc power reboot bootloader`）
-  之后 USB 先 `2717:FF08`，t≈24s 断开，**t=44s 出现 `18D1:D00D`**，
-  `fastboot devices` 看到设备，`fastboot getvar current-slot` → `current-slot: a`，
-  停留 40s 以上不再自动回系统。
-- 回归：普通 `reboot` 仍然正常回系统，misc 全零，dmesg 无 `boot_bcb` 记录。
-
-## 注意
-
-- 这条补丁只解决「系统层写错 BCB 字符串」的问题，不改变 LK 能力：
-  Download / EDL 在系统侧**根本没有任何写入者**
-  （全盘 grep `boot-download` / `boot-edl` / `download_mode` / `DOWNLOAD_BOOT` 零命中），
-  管理器的这两项本来就不可能在系统里生效，那是 Preloader 阶段的按键组合。
-- 设备带着 `boot-fastboot` 的 misc 重启后会停在 fastboot 不动（这是期望行为），
-  要回系统得再发一次 `fastboot reboot`，必要时重试两三次。
-- 轮询器每秒读一次 misc（32 字节），开销可以忽略；只在检测到
-  `bootonce-bootloader` 时才写盘。
+- 不要用 `dd` 写 `boot_a`：该分区在系统内挂载后被保护，`dd` 会"报告成功但数据丢失"
+  （写 1 MB 随机数据后 `cmp` 立刻 `WRITE_LOST`）。刷机只能用 `fastboot flash boot_a`。
+- `adb reboot bootloader` 后要立刻起 `fastboot flash`（它会 `< waiting for any device >` 等设备）。
+- bootloader 重启那条链现在完全依赖 reboot reason：内核只把 reason 往下传，
+  KSU 的 `ksu_handle_sys_reboot()` 对非 KSU magic 立即返回，不参与判定。
