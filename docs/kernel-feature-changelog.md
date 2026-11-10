@@ -81,6 +81,20 @@ SUSFS v2.0.0 NON-GKI）。管理器 versionCode 必须 **≤ 33305**，否则管
 
 完整证据链（栈、复现表、排查口诀、三种 BCB 串语义）：`docs/boot-recovery-reboot.md`。
 
+另外两个菜单项（Download / EDL）**不是 bug，是平台固件没这功能**，且已用代码证据坐实：
+
+- 命令确实传到了内核：pstore 里 `init: Reboot start, reason: reboot,edl, reboot_target: edl`
+  → `ARCH_RESET happen!!!` → `arch_reset: cmd = edl`。
+- 卡在 `drivers/watchdog/mediatek/wdk/wd_api.c:659` 的 `arch_reset()`：cmd 白名单只有
+  `charger` / `recovery` / `bootloader` / `dm-verity device corrupted` / `kpoc`，`edl` 与
+  `download` 落到 `else` → `WD_SW_RESET_BYPASS_PWR_KEY`，等价于一次普通看门狗复位，
+  PMIC spare register 里不留标记（`enum rtc_spare_enum` 也没有 DL/EDL 项）。
+- LK 侧同样没有：`lk_a` 里 `edl` / `boot-edl` / `boot-download` / `downinit` 全 0，
+  22 条 `oem` 命令无一能进；Preloader 里 `bootonce` / `boot-fastboot` / `boot-recovery` 全 0，
+  只有 `download keys are pressed` 与 `emergency download mode(timeout: %ds)` —— 只认按键/工具握手。
+- 旁证：`svc power reboot download` 之后 `persist.sys.boot.reason` 记成 `reboot,downinit`，
+  但 `downinit` 这个字符串在内核、LK、init、framework 里一次都没出现过。
+
 ## 五、构建系统（`build.sh`）
 
 原厂脚本只认它自己的打包流程，接官方 stock `boot.img` + Android 17 需要一串修补：
@@ -110,7 +124,7 @@ SUSFS v2.0.0 NON-GKI）。管理器 versionCode 必须 **≤ 33305**，否则管
 
 | 项 | 状态 |
 | --- | --- |
-| 重启至 Download / EDL | 系统侧无任何 BCB 写入者（`/system/bin`、`/system/lib64`、`/vendor/bin`、`/vendor/lib64` 全盘无 `boot-download`/`boot-edl`/`download_mode`），只能 Preloader 阶段按键 |
+| 重启至 Download / EDL | **平台固件层缺失，内核无法补**。命令能传到内核（pstore：`arch_reset: cmd = edl`），但 `drivers/watchdog/mediatek/wdk/wd_api.c:659 arch_reset()` 的 cmd 白名单只有 `charger`/`recovery`/`bootloader`/`dm-verity device corrupted`/`kpoc`，其余落到 `WD_SW_RESET_BYPASS_PWR_KEY` 普通复位；`enum rtc_spare_enum` 也没有 DL/EDL 项。LK（`lk_a`）里 `edl`/`boot-edl`/`boot-download`/`downinit` 全 0，22 条 `oem` 命令无一能进；Preloader 里 `bootonce`/`boot-fastboot`/`boot-recovery` 全 0，只有 `download keys are pressed` 与 `emergency download mode(timeout: %ds)` —— 只认按键/工具握手。详见 `docs/boot-recovery-reboot.md` 第 8 节 |
 | `Restrict shell root to ADB` | 内核缺对应 feature 位，管理器直接标注「内核不支持此特性」 |
 | `adb remount` | ROM 是 `user` 构建 + dm-verity，即使 adbd 已是 root 也不可用 |
 | 宽容模式下的 selinux_hide | `feature/selinux_hide.c` 在非 enforcing 且非 late-load 时 `skip not enforcing`，挂宽容等于隐藏功能半残 |

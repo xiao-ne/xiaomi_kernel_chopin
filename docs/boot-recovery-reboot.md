@@ -9,8 +9,8 @@ KernelSU 管理器「重启」菜单各入口的实测行为、MTK LK 的 BCB �
 |---|---|---|
 | 重启至 Recovery | 管理器先切飞行模式，再 `svc power reboot recovery`；init 写 BCB=`boot-recovery` | 进 recovery（boot ramdisk 里的 `system/bin/recovery`） |
 | 重启至 Bootloader | `PowerManager.reboot("bootloader")` → ShutdownThread → `Reboot reason: bootloader`；init 写 BCB=`bootonce-bootloader` | **LK 原生 fastboot**（`is-userspace: no`，`version-bootloader: chopin-b4b182403-...`），15s 到达并长期停留 |
-| 重启至 Download | 系统侧没有任何实现 | 只会普通重启回系统 |
-| 重启至 EDL | 系统侧没有任何实现 | 只会普通重启回系统 |
+| 重启至 Download | `svc power reboot download` → init 传 `reboot_target: download` → 内核 `arch_reset()` 白名单无此项 → 普通看门狗复位 | 只会普通重启回系统（详见第 8 节） |
+| 重启至 EDL | `svc power reboot edl` → 同上，`arch_reset()` 白名单无 `edl` | 只会普通重启回系统（详见第 8 节） |
 
 ## 2. 关键证据：BCB 字符串决定 LK 走哪条路
 
@@ -192,3 +192,92 @@ MTK 看门狗硬复位 → reboot reason 丢失 → LK 按普通启动进系统�
   就说明**关机过程中内核崩了**，此时 reboot reason 必然丢失，LK 只会普通启动。
 - `console-ramoops` 被截断到 256KB，panic 的完整调用栈常常**只落在** `dmesg-ramoops-*`，
   两处都要看。
+
+## 8. 第 10 轮（2026-11-10）：Download / EDL 点了只回系统，根因在内核重启白名单
+
+### 8.1 实测（每 2 秒采样 USB VID/PID）
+
+| 命令 | USB 轨迹 | 结果 |
+| --- | --- | --- |
+| `svc power reboot download` | `2717:FF48` → 无 USB（关机）→ `2717:FF08`（LK 阶段）→ `2717:FF48` | 回系统 |
+| `svc power reboot edl` | `2717:FF48` → 无 USB → `2717:FF08` → `2717:FF48` | 回系统 |
+
+全程没有出现 `0E8D`（MTK Preloader / BROM 的 USB ID），`misc` 始终保持 32 字节全零
+（`dd if=/dev/block/by-name/misc bs=32 count=1 | od -A x -t x1`）。
+
+### 8.2 命令确实传到了内核，卡在 `arch_reset()` 的白名单
+
+`/sys/fs/pstore/console-ramoops` 原文（`svc power reboot edl` 那次）：
+
+```
+init: Received sys.powerctl='reboot,edl' from pid: 1684 (system_server)
+init: Reboot start, reason: reboot,edl, reboot_target: edl
+ARCH_RESET happen!!!
+arch_reset: cmd = edl
+wdt_arch_reset: compatible node found: toprgu
+wdt_arch_reset: disable pwrap before wdt reset
+```
+
+`drivers/watchdog/mediatek/wdk/wd_api.c:659` 的 `arch_reset(char mode, const char *cmd)`
+只认四条 cmd：
+
+```c
+if (cmd && !strcmp(cmd, "charger"))                        { /* nothing */ }
+else if (cmd && !strcmp(cmd, "recovery"))                  { rtc_mark_recovery(); }
+else if (cmd && !strcmp(cmd, "bootloader"))                { rtc_mark_fast(); }
+else if (cmd && !strcmp(cmd, "dm-verity device corrupted")) { ... }
+else if (cmd && !strcmp(cmd, "kpoc"))                      { rtc_mark_kpoc(); }
+else                                                        { reboot = WD_SW_RESET_BYPASS_PWR_KEY; }
+```
+
+`"edl"` / `"download"` 都不在表里 → 落到 `else` → 退化成一次普通看门狗复位，
+PMIC 的 spare register 里不留任何标记，LK 只能当普通开机处理。
+
+### 8.3 为什么 `recovery` / `bootloader` 能成，这两个不能
+
+差别就在这张表上：`bootloader` 走 `rtc_mark_fast()`（`drivers/mfd/mt6358-misc.c:717`），
+把 `RTC_FAST_BOOT` spare register 置 1；`recovery` 走 `rtc_mark_recovery()` 置
+`RTC_FAC_RESET`。LK 上电读这两个标记才决定进 fastboot / recovery。
+`edl`、`download` 既没有对应分支，spare register 枚举里也没有 DL/EDL 项
+（`enum rtc_spare_enum`：FGSOC / ANDROID / FAC_RESET / BYPASS_PWR / PWRON_TIME /
+FAST_BOOT / KPOC / DEBUG / PWRON_AL / UART / AUTOBOOT / PWRON_LOGO / 32K_LESS / LP_DET /
+FFU_FLAG / FG_INIT）。
+
+### 8.4 LK 与 Preloader 侧同样没有入口（不是内核能补的）
+
+从设备 dump 出来的 `lk_a`（8388608 字节，未压缩）：
+
+- `edl` 出现 **0 次**；`boot-edl` 0；`boot-download` 0；`downinit` 0；`bootonce` 0。
+- 认的重启原因只有：`Reason: vol down`、`Reason: reboot bootloader`、`Reason: boot menu`、
+  `Reason: detect META Mode`、`Reason: unknown`。
+- BCB 命令串只有 `boot-fastboot`（偏移 685732）与 `boot-recovery`（偏移 685816）。
+- 22 条 `oem` 命令（`oem printk` / `lkmsg` / `lpmsg` / `cdms` / `dump_pllk_log` / `off` / `key` /
+  `lks` / `unlock` / `lock` / `get_socid` / `fbreason` / `scp_status` / `scp_log_thru_ap_uart` /
+  `usb` / `mrdump` / `mrdump_chkimg` / `get_token` / `ultraflash` / `ultraflash_en` / `poweroff`）
+  里没有一条能进 Download / EDL。
+
+`preloader_chopin.bin`（453580 字节）：
+
+- `bootonce` / `boot-fastboot` / `boot-recovery` 全 0 —— Preloader **根本不看 misc**。
+- 但有两条关键串：`download keys are pressed`、`%s emergency download mode(timeout: %ds)`。
+- 说明这两个模式只由**按键 / 工具握手**触发，与 misc、BCB、reboot reason 无关。
+
+HyperOS4（A17）的 `images/lk.img` 对比结果相同：`boot-edl` / `boot-download` / `downinit` 全 0。
+
+### 8.5 结论
+
+- Download / EDL 在 chopin 上是**平台固件层面的缺失**（Preloader / LK 都是闭源二进制），
+  系统侧和内核侧都无法补。
+- 管理器里这两项是上游通用菜单，实现是 `svc power reboot <reason>`，在固件支持该 reason 的
+  机型上才有意义。
+- 旁证：`svc power reboot download` 之后 `persist.sys.boot.reason` 记成 `reboot,downinit`
+  （MIUI 管 Download 模式叫 downinit），但 `downinit` 这个字符串在内核、LK、init、framework
+  里**一次都没出现过**——名字有，实现没有。
+
+### 8.6 真要进这两个模式只能物理操作
+
+- Download 模式：关机 → 同时按住音量 + 与音量 - → 插 USB，触发 Preloader 的
+  `download keys are pressed`，等 DA 握手（`FlashROM/` 里的 `MTK_AllInOne_DA.bin` +
+  `SP_Download_tool`）。
+- EDL：同类按键组合走 `emergency download mode`（带 timeout），或短接测试点。
+- 风险提示：真进了 EDL 只能靠 SP Flash Tool 出来，测试时建议先只试 Download 模式。
