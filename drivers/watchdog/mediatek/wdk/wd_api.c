@@ -681,6 +681,25 @@ void arch_reset(char mode, const char *cmd)
 		rtc_mark_recovery();
 	} else if (cmd && !strcmp(cmd, "bootloader")) {
 		rtc_mark_fast();
+	} else if (cmd && (!strcmp(cmd, "download") || !strcmp(cmd, "edl") ||
+			   !strcmp(cmd, "downinit"))) {
+		/*
+		 * chopin's Preloader and LK implement neither Download nor EDL as a
+		 * reboot target: the RTC spare bitmap has no slot for them, and the
+		 * only way in is a key combo or a tool handshake. Sending them down
+		 * the default branch means WD_SW_RESET_BYPASS_PWR_KEY, i.e. a plain
+		 * watchdog reset with no marker, and the phone comes straight back
+		 * up in Android.
+		 *
+		 * Route both to the marker that does work: RTC_FAST_BOOT, the same
+		 * spare bit "reboot bootloader" sets. LK then stays in its native
+		 * fastboot, which on this platform can flash every partition
+		 * including preloader and LK itself, so it covers the recovery use
+		 * case EDL would have covered.
+		 */
+		pr_info("%s: %s has no firmware entry, booting LK fastboot instead\n",
+			__func__, cmd);
+		rtc_mark_fast();
 	} else if (cmd && !strcmp(cmd, "dm-verity device corrupted")) {
 #ifdef CONFIG_MTK_SECURITY_SW_SUPPORT
 		res = masp_hal_set_dm_verity_error();
