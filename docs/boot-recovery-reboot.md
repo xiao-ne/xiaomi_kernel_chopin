@@ -328,7 +328,28 @@ PMIC 的 `RTC_FAST_BOOT` 位，不是 misc。所以最终只改 `arch_reset()`�
 `18D1:D00D` 超过 40 秒，`fastboot devices` 可见，`version-bootloader` 为
 `chopin-b4b182403-20230427143113-20231102161415`（LK 原生，非 fastbootd）。
 
-`dmesg` 直证这次也没抓到：MTK 看门狗复位前 dmesg 来不及落盘（`dmesg -w > 文件` 只留下
-`init: Received sys.powerctl='reboot,recovery'` 之后就断了）。行为证据是充分且可重复的，
-但"是我们改了 `arch_reset()` 才这样"这一点仍属行为推断——如果需要直证，可以在
-`rtc_mark_fast()` 之后加一次 `printk` 到 pmsg，或把日志写进 `pstore`。
+### 9.4 因果的严格证明：背靠背 A/B
+
+`dmesg` 直证抓不到，而且换了多条路都不行：
+
+- `dmesg -w > /data/local/tmp/rec.log` 在复位前只写下了
+  `init: Received sys.powerctl='reboot,recovery'`，到 `arch_reset` 就断了。
+- `/data/system/dropbox/` 里 26 份 `SYSTEM_LAST_KMSG` 全翻过：`firmware entry` **命中 0 次**，
+  但有 6 份 `arch_reset: cmd = edl`、6 份 `cmd = download`，时间戳（16:09 / 16:42 / 17:45）
+  全部早于 KsEdl 的编译时间（18:30）——那些都是 KsExt4 时代的。
+- 反向对照：同一次 `reboot recovery` 的 `console-ramoops` 却有 262KB 且完整保留到末尾的
+  `arch_reset: cmd = userrequested,recovery`。
+
+也就是说：**走 fastboot 分支时 ramoops 的 DRAM 区域不被保留**，内核日志根本没机会攒到能读出来。
+这不是代码问题而是采集环境问题，再加 `printk_deferred` 也抓不到。
+
+于是改用背靠背 A/B，把"不同时期测的"这个唯一漏洞补掉：
+
+| 步骤 | 内核 | 操作 | 结果 |
+|---|---|---|---|
+| 1 | 先刷 `boot-KsExt4.img`（**无**重定向分支） | misc 清零 → `svc power reboot edl` | `2717:FF48` → 无 → `2717:FF08` → **回 Android**，`ro.boot.bootreason=reboot` |
+| 2 | 再刷 `boot-KsEdl.img`（**有**分支） | misc 清零 → `svc power reboot edl` | `2717:FF48` → 无 → t=14s **`18D1:D00D`**，`is-userspace: no`，稳定停留 |
+| 3 | 同一 KsEdl | misc 清零 → `svc power reboot download` | t=12s **`18D1:D00D`**，`is-userspace: no` |
+
+两个内核之间只差 `wd_api.c` 里那一个 hunk（`git log` 可查：`eae22a26d` 是唯一改 `arch_reset()` 的提交），
+同一台设备、同一根线、同一条命令，间隔约五分钟。因果链到此闭合，不再需要日志直证。

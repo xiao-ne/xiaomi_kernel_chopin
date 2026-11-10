@@ -115,6 +115,10 @@ SUSFS v2.0.0 NON-GKI）。管理器 versionCode 必须 **≤ 33305**，否则管
 不写 BCB：`lk_a` 里 `bootonce` 搜索 0 次命中，LK 根本不认 Android 标准的
 `bootonce-bootloader`，真正决定它停不停在 fastboot 的是 PMIC 的 `RTC_FAST_BOOT` 位。
 
+日志直证抓不到（走 fastboot 分支时 ramoops 的 DRAM 区域不保留，`SYSTEM_LAST_KMSG` 与
+`dmesg -w` 都断在 `init: Received sys.powerctl=` 那行），改用背靠背 A/B 证因果：先刷无分支的 `boot-KsExt4.img` 跑 `edl` → 回 Android；再刷有分支的 `boot-KsEdl.img` 跑同一命令
+→ t=14s 进 `18D1:D00D`、`is-userspace: no`。两内核只差 `wd_api.c` 一个 hunk。
+
 实测（`4.14.336-KsEdl` / `boot-KsEdl-20261110_183333.img`）：`svc power reboot edl` 与
 `svc power reboot download` 都落到 `18D1:D00D` + `is-userspace: no`，稳定 40 秒以上；
 而 `recovery`（`18D1:4E11`）、`bootloader`、普通重启三条回归全绿。
