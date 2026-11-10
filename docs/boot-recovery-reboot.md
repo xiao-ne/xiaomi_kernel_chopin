@@ -111,3 +111,84 @@ PID 70676  F:\...\platform-tools\adb.exe    adb -L tcp:5037 fork-server server
 - 之前的「都回系统」= 观测时刻 adb 被另一个 server 占住（看不到设备）+ 可能把"没连上"误判成"进了系统"；与内核、BCB 残留、管理器版本都无关。
 - `bootonce-bootloader` 残留在 misc 里不影响后续 Recovery 重启（init 会覆写 BCB）。
 - 排查重启类问题时的固定动作：先确认只有一个 adb server、再每 2 秒采样 USB（`VID_2717` vs `VID_18D1`）判定落点。
+## 7. 第 9 轮（2026-11-09 深夜）：关机时 ext4 sysfs 重复摘除导致内核 panic
+
+### 7.1 现象与现场
+
+用户点管理器「重启至 Recovery」→ 手机重启后回到系统。`/sys/fs/pstore/dmesg-ramoops-0` 抓到了现场（21:11 那次）：
+
+```
+[561.798] init: Received sys.powerctl='reboot,recovery' from pid: 1683 (system_server)
+[561.805] init: Reboot start, reason: reboot,recovery, reboot_target: recovery
+[566.310] Oops#1:
+          remove_proc_entry+0x90/0x210
+          ext4_unregister_sysfs+0x28/0x6c
+          ext4_put_super+0xa4/0x330
+          generic_shutdown_super ← kill_block_super ← deactivate_locked_super
+          ← deactivate_super ← cleanup_mnt ← __cleanup_mnt
+          ← task_work_run ← do_notify_resume ← work_pending
+[568.001] wdt_arch_reset: disable pwrap before wdt reset
+```
+
+init 已经把重启目标正确设成 recovery，但 6 秒后内核在卸载 ext4 时踩到已释放内存 → panic →
+MTK 看门狗硬复位 → reboot reason 丢失 → LK 按普通启动进系统。
+**这就是「点 Recovery 回系统」的全部原因**，与 BCB、管理器、reboot reason 传递都无关。
+
+### 7.2 成因链
+
+1. 元模块 `meta-overlayfs` 把 2GB ext4 镜像 loop 挂到 `/data/adb/modules/meta-overlayfs/mnt`（本次是 `/dev/block/loop33`）。
+2. 它的 `post-mount.sh` 调 `ksud kernel nuke-ext4-sysfs <mnt>`，内核侧
+   `drivers/kernelsu/kernel/runtime/boot_event.c:79 int nuke_ext4_sysfs(const char *mnt)`
+   直接 `ext4_unregister_sysfs(sb)` —— 目的是把该 fs 从 `/proc/fs/ext4/<name>` 藏起来（反检测）。
+3. `fs/ext4/sysfs.c:434 ext4_unregister_sysfs()` 里的 `remove_proc_entry()` **会释放**这些 proc 条目，
+   但 `sbi->s_proc` 指针没有清空。
+4. 关机时 `ext4_put_super()`（`fs/ext4/super.c:924`）**再次**调 `ext4_unregister_sysfs()` →
+   拿着已释放的 `s_proc` 再 `remove_proc_entry()` → use-after-free → panic。
+
+`kobject_del()` 同样不幂等（第二次会破坏 kset 链表），所以两处都要处理。
+
+### 7.3 为什么「时好时坏」
+
+复现实验（同一颗内核 `4.14.336-KsNoBcb`，nuke 开启）：
+
+| 操作 | 结果 |
+|---|---|
+| `svc power reboot recovery` | t=18s → `18D1:4E11`（进 recovery，未见 panic） |
+| `adb reboot`（nuke 生效中） | `ro.boot.bootreason=reboot`，console 无 panic |
+| 用户那次 UI 点击 | panic，回系统 |
+
+所以 100% 复现做不到：这个 UAF 是否崩，取决于释放后的内存有没有被别的东西改写成野指针。
+但机制是确定的（一次释放 + 一次必然发生的重复摘除），panicking 的调用栈也把位置钉死在
+`ext4_unregister_sysfs`。
+
+### 7.4 修法（内核侧，已落地）
+
+让 `ext4_unregister_sysfs()` 幂等（`fs/ext4/sysfs.c`）：
+
+```c
+	if (sbi->s_proc) {
+		for (p = proc_files; p->name; p++)
+			remove_proc_entry(p->name, sbi->s_proc);
+		remove_proc_entry(sb->s_id, ext4_proc_root);
+		sbi->s_proc = NULL;          /* 关键：别让第二次再摘一遍 */
+	}
+	if (sbi->s_kobj.state_in_sysfs)  /* 同理，kobject_del 只做一次 */
+		kobject_del(&sbi->s_kobj);
+```
+
+为什么改 ext4 而不是改 KSU：`nuke_ext4_sysfs()` 手里只有 `struct super_block *`，
+而 `s_proc` 是 `ext4_sb_info` 的私有字段。把幂等责任放在 ext4 内部，
+任何"提前摘一次"的调用者（KernelSU 只是其中一个）都自动安全。
+
+### 7.5 现场处置
+
+- 诊断期间先停用了 `post-mount.sh` 里的 `nuke-ext4-sysfs`（原文件备份在 `/data/local/tmp/post-mount.sh.bak`）。
+- 关掉 nuke 的代价：`/proc/fs/ext4/loop33` 会重新可见（少一层反检测）。
+- 装上这个内核补丁后**没有这个取舍**：nuke 可以继续用，也不会在关机时 panic。
+
+### 7.6 排查口诀
+
+- 重启没到预期目标时，先翻 `/sys/fs/pstore/`：`dmesg-ramoops-*` 里出现 `Oops#1` / `Panic#2`
+  就说明**关机过程中内核崩了**，此时 reboot reason 必然丢失，LK 只会普通启动。
+- `console-ramoops` 被截断到 256KB，panic 的完整调用栈常常**只落在** `dmesg-ramoops-*`，
+  两处都要看。
