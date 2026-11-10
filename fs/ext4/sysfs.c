@@ -436,12 +436,22 @@ void ext4_unregister_sysfs(struct super_block *sb)
 	struct ext4_sb_info *sbi = EXT4_SB(sb);
 	const struct ext4_proc_files *p;
 
+	/*
+	 * This is not necessarily called only once per super block: a caller
+	 * that wants to hide the fs from /proc/fs/ext4 (KernelSU does this for
+	 * its metamodule loop mount) unregisters early, and ext4_put_super()
+	 * unregisters again on umount.  remove_proc_entry() frees the entries,
+	 * so a second pass walks freed memory and panics; kobject_del() twice
+	 * would also corrupt the kset list.  Make the work idempotent.
+	 */
 	if (sbi->s_proc) {
 		for (p = proc_files; p->name; p++)
 			remove_proc_entry(p->name, sbi->s_proc);
 		remove_proc_entry(sb->s_id, ext4_proc_root);
+		sbi->s_proc = NULL;
 	}
-	kobject_del(&sbi->s_kobj);
+	if (sbi->s_kobj.state_in_sysfs)
+		kobject_del(&sbi->s_kobj);
 }
 
 int __init ext4_init_sysfs(void)
