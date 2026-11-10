@@ -81,7 +81,8 @@ SUSFS v2.0.0 NON-GKI）。管理器 versionCode 必须 **≤ 33305**，否则管
 
 完整证据链（栈、复现表、排查口诀、三种 BCB 串语义）：`docs/boot-recovery-reboot.md`。
 
-另外两个菜单项（Download / EDL）**不是 bug，是平台固件没这功能**，且已用代码证据坐实：
+另外两个菜单项（Download / EDL）原本**不是 bug，是平台固件没这功能**，第 11 轮已改成重定向
+（见本节末尾），下面的取证仍然有效：
 
 - 命令确实传到了内核：pstore 里 `init: Reboot start, reason: reboot,edl, reboot_target: edl`
   → `ARCH_RESET happen!!!` → `arch_reset: cmd = edl`。
@@ -94,6 +95,29 @@ SUSFS v2.0.0 NON-GKI）。管理器 versionCode 必须 **≤ 33305**，否则管
   只有 `download keys are pressed` 与 `emergency download mode(timeout: %ds)` —— 只认按键/工具握手。
 - 旁证：`svc power reboot download` 之后 `persist.sys.boot.reason` 记成 `reboot,downinit`，
   但 `downinit` 这个字符串在内核、LK、init、framework 里一次都没出现过。
+
+### 第 11 轮：把 Download / EDL 重定向到 LK fastboot
+
+既然平台固件没有入口，而 LK 原生 fastboot 在这台机器上能刷全部分区（官方 `flash_all.bat`
+39 条命令里连 `preloader_ab` 和 `lk_ab` 都走 fastboot），就把这两个 target 接到已验证可用的
+那条路上：
+
+```c
+/* drivers/watchdog/mediatek/wdk/wd_api.c, arch_reset() */
+} else if (cmd && (!strcmp(cmd, "download") || !strcmp(cmd, "edl") ||
+                   !strcmp(cmd, "downinit"))) {
+        pr_info("%s: %s has no firmware entry, booting LK fastboot instead\n",
+                __func__, cmd);
+        rtc_mark_fast();       /* 与 "bootloader" 完全同一条路 */
+}
+```
+
+不写 BCB：`lk_a` 里 `bootonce` 搜索 0 次命中，LK 根本不认 Android 标准的
+`bootonce-bootloader`，真正决定它停不停在 fastboot 的是 PMIC 的 `RTC_FAST_BOOT` 位。
+
+实测（`4.14.336-KsEdl` / `boot-KsEdl-20261110_183333.img`）：`svc power reboot edl` 与
+`svc power reboot download` 都落到 `18D1:D00D` + `is-userspace: no`，稳定 40 秒以上；
+而 `recovery`（`18D1:4E11`）、`bootloader`、普通重启三条回归全绿。
 
 ## 五、构建系统（`build.sh`）
 
@@ -124,7 +148,7 @@ SUSFS v2.0.0 NON-GKI）。管理器 versionCode 必须 **≤ 33305**，否则管
 
 | 项 | 状态 |
 | --- | --- |
-| 重启至 Download / EDL | **平台固件层缺失，内核无法补**。命令能传到内核（pstore：`arch_reset: cmd = edl`），但 `drivers/watchdog/mediatek/wdk/wd_api.c:659 arch_reset()` 的 cmd 白名单只有 `charger`/`recovery`/`bootloader`/`dm-verity device corrupted`/`kpoc`，其余落到 `WD_SW_RESET_BYPASS_PWR_KEY` 普通复位；`enum rtc_spare_enum` 也没有 DL/EDL 项。LK（`lk_a`）里 `edl`/`boot-edl`/`boot-download`/`downinit` 全 0，22 条 `oem` 命令无一能进；Preloader 里 `bootonce`/`boot-fastboot`/`boot-recovery` 全 0，只有 `download keys are pressed` 与 `emergency download mode(timeout: %ds)` —— 只认按键/工具握手。详见 `docs/boot-recovery-reboot.md` 第 8 节 |
+| 重启至 Download / EDL | **已重定向到 LK fastboot（`arch_reset()` 补丁）**。平台固件层本来没有这两个入口：`arch_reset()`（`drivers/watchdog/mediatek/wdk/wd_api.c:659`）的 cmd 白名单只有 `charger`/`recovery`/`bootloader`/`dm-verity device corrupted`/`kpoc`，其余落到 `WD_SW_RESET_BYPASS_PWR_KEY` 普通复位；LK（`lk_a`）里 `edl`/`boot-edl`/`boot-download`/`downinit` 全 0，Preloader 只认按键或工具握手。第 11 轮在 `bootloader` 分支后加了 `download`/`edl`/`downinit` 一支，直接调 `rtc_mark_fast()`，两个菜单项现在落到 `18D1:D00D` + `is-userspace: no` 的 LK 原生 fastboot（实测稳定 40s 以上），而该界面在此平台上能刷包括 preloader 与 LK 在内的全部分区，等价覆盖了 EDL 的救砖用途。详见 `docs/boot-recovery-reboot.md` 第 9 节 |命令能传到内核（pstore：`arch_reset: cmd = edl`），但 `drivers/watchdog/mediatek/wdk/wd_api.c:659 arch_reset()` 的 cmd 白名单只有 `charger`/`recovery`/`bootloader`/`dm-verity device corrupted`/`kpoc`，其余落到 `WD_SW_RESET_BYPASS_PWR_KEY` 普通复位；`enum rtc_spare_enum` 也没有 DL/EDL 项。LK（`lk_a`）里 `edl`/`boot-edl`/`boot-download`/`downinit` 全 0，22 条 `oem` 命令无一能进；Preloader 里 `bootonce`/`boot-fastboot`/`boot-recovery` 全 0，只有 `download keys are pressed` 与 `emergency download mode(timeout: %ds)` —— 只认按键/工具握手。详见 `docs/boot-recovery-reboot.md` 第 8 节 |
 | `Restrict shell root to ADB` | 内核缺对应 feature 位，管理器直接标注「内核不支持此特性」 |
 | `adb remount` | ROM 是 `user` 构建 + dm-verity，即使 adbd 已是 root 也不可用 |
 | 宽容模式下的 selinux_hide | `feature/selinux_hide.c` 在非 enforcing 且非 late-load 时 `skip not enforcing`，挂宽容等于隐藏功能半残 |

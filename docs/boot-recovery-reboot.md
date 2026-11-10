@@ -281,3 +281,54 @@ HyperOS4（A17）的 `images/lk.img` 对比结果相同：`boot-edl` / `boot-dow
   `SP_Download_tool`）。
 - EDL：同类按键组合走 `emergency download mode`（带 timeout），或短接测试点。
 - 风险提示：真进了 EDL 只能靠 SP Flash Tool 出来，测试时建议先只试 Download 模式。
+
+## 9. 第 11 轮（2026-11-10 晚）：把 Download / EDL 重定向到 LK fastboot（已落地并验证）
+
+第 10 轮定位到 `arch_reset()` 的白名单是根因之后，用户选择了「改内核，让这两个入口落到已验证可用的
+LK fastboot」。改动只有一处，不碰 KSU、不写 BCB。
+
+### 9.1 改动
+
+`drivers/watchdog/mediatek/wdk/wd_api.c` 里 `void arch_reset(char mode, const char *cmd)`
+的 cmd 分派表，在 `bootloader` 分支之后新增一支：
+
+```c
+} else if (cmd && (!strcmp(cmd, "download") || !strcmp(cmd, "edl") ||
+                   !strcmp(cmd, "downinit"))) {
+        pr_info("%s: %s has no firmware entry, booting LK fastboot instead\n",
+                __func__, cmd);
+        rtc_mark_fast();
+}
+```
+
+三个 target 名都收：`edl` 与 `download` 是管理器菜单直接传的，`downinit` 是 MIUI 在
+`persist.sys.boot.reason` 里记录的别名，三个走同一支。
+
+`rtc_mark_fast()`（`drivers/mfd/mt6358-misc.c:717`）写 PMIC 的 `RTC_FAST_BOOT` spare 位，
+和 `reboot bootloader` 完全是同一条路——所以落点必然是同一个界面，不需要新的验证前提。
+
+### 9.2 为什么不是写 BCB
+
+一开始想复用第 6 轮那版「改写 misc 里的 BCB」，但静态取证否掉了：`lk_a` 里 `bootonce`
+搜索 0 次命中，也就是 LK **不认** Android 标准的 `bootonce-bootloader`（这也解释了为什么
+misc 里残留该串时设备照样进 recovery / 普通系统）。真正决定 LK 停不停在 fastboot 的是
+PMIC 的 `RTC_FAST_BOOT` 位，不是 misc。所以最终只改 `arch_reset()`。
+
+### 9.3 实测（kernel `4.14.336-KsEdl`，镜像 `boot-KsEdl-20261110_183333.img`）
+
+| 入口 | USB 轨迹 | 落点 | 结论 |
+|---|---|---|---|
+| `svc power reboot edl` | `2717:FF48` → 无 → t=14s `18D1:D00D` 持续 | `is-userspace: no` | ✅ LK fastboot |
+| `svc power reboot download` | `2717:FF48` → 无 → t=14s `18D1:D00D` 持续 | `is-userspace: no` | ✅ LK fastboot |
+| `svc power reboot bootloader` | `2717:FF08` → `18D1:D00D` t=14s | `is-userspace: no` | ✅ 未受影响 |
+| `svc power reboot recovery` | `2717:FF48` → 无 → t=18s `18D1:4E11` | recovery | ✅ 未受影响 |
+| 普通 `adb reboot` | 正常 | `ro.boot.bootreason=reboot` | ✅ 未受影响 |
+
+两次 Download / EDL 测试前都先把 misc 前 32 字节清零，排除残留干扰；两次都稳定停在
+`18D1:D00D` 超过 40 秒，`fastboot devices` 可见，`version-bootloader` 为
+`chopin-b4b182403-20230427143113-20231102161415`（LK 原生，非 fastbootd）。
+
+`dmesg` 直证这次也没抓到：MTK 看门狗复位前 dmesg 来不及落盘（`dmesg -w > 文件` 只留下
+`init: Received sys.powerctl='reboot,recovery'` 之后就断了）。行为证据是充分且可重复的，
+但"是我们改了 `arch_reset()` 才这样"这一点仍属行为推断——如果需要直证，可以在
+`rtc_mark_fast()` 之后加一次 `printk` 到 pmsg，或把日志写进 `pstore`。
