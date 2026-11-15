@@ -26,6 +26,7 @@ A17 的 netd / 系统组件依赖一批 4.14 没有的 BPF 能力，缺一个就
 | cgroup/sock 程序 | 暴露 socket cookie、`sk_storage_get`；支持 cgroup/sock release hook（attach type 34）；`getsockopt`/`setsockopt` 真正触发 cgroup sockopt hook | `8bec71822` `dc856d4f1` `a95fadc33` |
 | cgroup/skb 程序 | 允许调用 socket lookup helper；修正 LWT 的 `sk_lookup` 分派 | `74ef52829` `2b100b7e8` |
 | defconfig | `arch/arm64/configs/chopin_a17_defconfig`（5677 行）纳入仓库 | `a1a12d3f5` |
+| defconfig 合并 | 上面那份其实是整份 `.config` dump；与 `chopin_defconfig` 合并成单一 `chopin_defconfig`（618 行，解析结果与原 a17 只差 16 项已全部并入）。`CONFIG_MTK_AEE_IPANIC` 按实编结果改为 `is not set`，不再依赖 build.sh 的 sed 兜底 | 本次改动 |
 
 细节与调试过程：`docs/android17-bpf-port.md`。
 

@@ -198,8 +198,9 @@ python3 /mnt/c/Users/xiaone/AppData/Local/Temp/verify_sources.py
 * `arch/arm/boot/dts/mediatek` 在 index 里是普通文件、在工作区是目录，要跳过；
 * `out/` 一旦出现损坏 `.o`/`.cmd`，最省事的做法是删掉整个 `out/` 重建。
 
-**A17 的配置一定要在仓库里有对应文件**：`arch/arm64/configs/chopin_a17_defconfig`
-（提交 `0fca3bb09`）。删 `out/` 之前它只存在于 `out/.config` 里，差点丢掉。
+**A17 的配置一定要在仓库里有对应文件**：`arch/arm64/configs/chopin_defconfig`
+（提交 `0fca3bb09` 首次纳入；后来与原 `chopin_a17_defconfig` 合并为这一份）。
+删 `out/` 之前它只存在于 `out/.config` 里，差点丢掉。
 
 ## 11. cgroup/sock release hook（attach type 34）
 

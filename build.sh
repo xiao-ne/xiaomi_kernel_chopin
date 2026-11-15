@@ -1,11 +1,13 @@
 #!/bin/bash
 
 # ==================== 配置区 ====================
-source ~/.bashrc && source ~/.profile
+[ -f ~/.bashrc ] && source ~/.bashrc
+[ -f ~/.profile ] && source ~/.profile
 
-KERNEL_DIR="$HOME/xiaomi_kernel_chopin"
-# A17 用的完整配置（chopin_defconfig 缺 28+ 个 MTK 驱动项，会卡在早期 init）
-DEFCONFIG="chopin_a17_defconfig"
+# 脚本所在目录即源码根：本地 ~/xiaomi_kernel_chopin 与 CI 的 checkout 路径都成立
+KERNEL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# 单一配置：原 chopin_a17_defconfig 已合并进 chopin_defconfig（见该文件末尾的合并说明）
+DEFCONFIG="chopin_defconfig"
 RELEASE_DIR="$KERNEL_DIR/release"
 
 # Ubuntu 系统交叉编译工具链
@@ -399,7 +401,7 @@ pack_img() {
 SETUP_FLAG="$HOME/.chopin_kernel_setup_done"
 
 setup_once() {
-    if [ -f "$SETUP_FLAG" ]; then
+    if [ -n "${CHOPIN_SKIP_SETUP:-}" ] || [ -f "$SETUP_FLAG" ]; then
         echo "依赖已安装，跳过设置"
         return
     fi
@@ -472,12 +474,19 @@ echo ""
 echo "  Xiaomi chopin 内核编译"
 echo ""
 
-read -p "版本名 (默认 $KERNEL_VERSION): " v
-[ -n "$v" ] && KERNEL_VERSION="$v"
+if [ -n "${CHOPIN_NONINTERACTIVE:-}" ]; then
+    # CI / 脚本调用：CHOPIN_VERSION 当版本名，CHOPIN_MODE 当菜单号
+    [ -n "${CHOPIN_VERSION:-}" ] && KERNEL_VERSION="$CHOPIN_VERSION"
+    c="${CHOPIN_MODE:-1}"
+    echo "非交互模式：版本名 $KERNEL_VERSION，菜单 $c"
+else
+    read -p "版本名 (默认 $KERNEL_VERSION): " v
+    [ -n "$v" ] && KERNEL_VERSION="$v"
 
-echo ""
-echo "1) 编译+打包  2) 仅编译  3) 仅打包  4) 清理旧日志  5) 查看最近错误"
-read -p "选择: " c
+    echo ""
+    echo "1) 编译+打包  2) 仅编译  3) 仅打包  4) 清理旧日志  5) 查看最近错误"
+    read -p "选择: " c
+fi
 
 case $c in
     1) build_kernel && pack_img ;;

@@ -1,0 +1,115 @@
+name: build-kernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      localversion:
+        description: 'CONFIG_LOCALVERSION 后缀，产物形如 4.14.336-<后缀>'
+        required: false
+        default: 'CI'
+      base_img_url:
+        description: '可选：底包 boot.img 直链；留空则只编译内核、不打包'
+        required: false
+        default: ''
+      force_base:
+        description: '跳过底包安全检查（仅对已验证底包使用）'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-kernel-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 150
+
+    steps:
+      - name: 检出源码（含 KernelSU 子模块）
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: 安装工具链
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang-13 lld-13 llvm-13 \
+            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            gcc-arm-linux-gnueabi binutils-arm-linux-gnueabi \
+            build-essential flex bison libssl-dev libelf-dev \
+            bc cpio rsync zip ccache python3
+
+      - name: 恢复 ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-${{ inputs.localversion }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ inputs.localversion }}-
+            ccache-
+
+      - name: 编译内核
+        env:
+          CHOPIN_NONINTERACTIVE: '1'
+          CHOPIN_SKIP_SETUP: '1'
+          CHOPIN_MODE: '2'
+          CHOPIN_VERSION: ${{ inputs.localversion }}
+        run: |
+          bash build.sh
+          echo "=== kernel version ==="
+          for f in out/arch/arm64/boot/Image out/arch/arm64/boot/Image.gz; do
+            if [ -f "$f" ]; then
+              zcat -f "$f" 2>/dev/null | strings -a | grep -m1 'Linux version'
+              break
+            fi
+          done
+
+      - name: 确认 Image 存在
+        run: |
+          test -s out/arch/arm64/boot/Image -o -s out/arch/arm64/boot/Image.gz \
+            || { echo "没有 Image 产物"; exit 1; }
+
+      - name: 生成 TWRP 的 prebuilt kernel
+        run: bash recovery/make-prebuilt.sh --out twrp-prebuilt --kernel-only
+
+      - name: 下载底包 boot.img
+        if: inputs.base_img_url != ''
+        env:
+          BASE_URL: ${{ inputs.base_img_url }}
+        run: |
+          curl -fL --retry 3 -o "$RUNNER_TEMP/base-boot.img" "$BASE_URL"
+          ls -l "$RUNNER_TEMP/base-boot.img"
+          sha256sum "$RUNNER_TEMP/base-boot.img"
+
+      - name: 打包 boot.img
+        if: inputs.base_img_url != ''
+        env:
+          CHOPIN_NONINTERACTIVE: '1'
+          CHOPIN_SKIP_SETUP: '1'
+          CHOPIN_MODE: '3'
+          CHOPIN_VERSION: ${{ inputs.localversion }}
+          BASE_IMG: ${{ runner.temp }}/base-boot.img
+          FORCE_BASE_IMG: ${{ inputs.force_base && '1' || '0' }}
+        run: bash build.sh
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: chopin-kernel-${{ inputs.localversion }}-${{ github.run_number }}
+          path: |
+            out/arch/arm64/boot/Image
+            out/arch/arm64/boot/Image.gz
+            out/arch/arm64/boot/dtb
+            out/arch/arm64/boot/dtb.img
+            out/arch/arm64/boot/dtbo.img
+            twrp-prebuilt/kernel
+            release/*.img
+            full_*.log
+          if-no-files-found: warn
+          retention-days: 14

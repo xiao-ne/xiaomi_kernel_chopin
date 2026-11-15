@@ -68,7 +68,7 @@ HAL 只能走 aw8697，所以原厂 A17 是能震的。
 
 ## 四、修复
 
-`arch/arm64/configs/chopin_a17_defconfig:2003`：
+`arch/arm64/configs/chopin_defconfig` 里这两项（按符号名查，别按行号）：
 
 ```
 # CONFIG_MTK_VIBRATOR is not set

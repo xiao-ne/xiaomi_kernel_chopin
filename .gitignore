@@ -10,6 +10,8 @@
 # Normal rules (sorted alphabetically)
 #
 .*
+# 例外：CI 配置不能被上面的 .* 吃掉
+!.github/
 *.a
 *.bin
 *.bz2

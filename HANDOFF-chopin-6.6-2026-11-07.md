@@ -79,7 +79,8 @@ ramdisk 内容全解到 `boot/tmp_$$` 根目录，而后面所有检查都去
 ## 关键事实（别被旧文档带偏）
 
 - 机型：**chopin = 红米 Note 10 Pro（M2104K10AC，MT6891Z / 天玑1100）**，不是 ares（K40 Gaming / MT6893）。板上 `ro.board.platform=mt6893`，DTS model `MT6891Z/CZA`，`k6891v1_64` 与 `k6893v1_64` 共用平台代码。
-- 构建用 `chopin_a17_defconfig`（`chopin_defconfig` 缺 28+ MTK 驱动项，会卡早期 init 且无日志）。
+- 构建用 `chopin_defconfig`（原 `chopin_a17_defconfig` 已合并进来，现在只有这一份；早先那份
+  `chopin_defconfig` 缺 28+ MTK 驱动项，会卡早期 init 且无日志）。
 - A17 测试走 DSU：主系统 Android 13，**绝不能刷 A17-ramdisk 包到 A13 系统**（第一屏 bootloop）；只刷 stock-ramdisk 包。
 - pstore：preloader 预留 ramoops 并传 `ramoops.mem_address=0x48090000 mem_size=0xe0000 pmsg_size=0x10000 console_size=0x40000`，内核**不能覆盖**这些参数（重复参数后写的赢 → probe 失败）。
 - 打补丁/跑脚本的姿势：PowerShell 会吃掉管道与引号 → 写 bash 脚本到 `/mnt/c/Users/xiaone/AppData/Local/Temp/dsh_*.sh`，再 `wsl -d Ubuntu-24.04 -e bash <script>` 执行。
